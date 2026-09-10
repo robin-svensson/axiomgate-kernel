@@ -1,0 +1,23 @@
+# TLC run — reproduction of the V6 evidence summary
+# Date: 2026-09-08  Java: OpenJDK 17.0.20.1  TLC: tla2tools.jar (local copy, not vendored here)
+# Command: java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -config GovernanceMCV6.cfg -workers auto -deadlock GovernanceMCV6
+# Note: -deadlock disables deadlock checking. Without it TLC halts at the expected bounded-state deadlock
+#       at depth 8 after a variable number of states (30k-56k across four runs; the count
+#       depends on how far parallel workers got, not on the model). V6_EVIDENCE_SUMMARY.md
+#       records that deadlock as expected.
+# INVARIANT checked: GovernanceSecurityBoundary == I1 /\ I2 /\ ... /\ I10 (GovernanceInvariantsV6.tla:81-85)
+
+TLC2 Version 2026.08.21.155922 (rev: 9787e65)
+Running breadth-first search Model-Checking with fp 98 and seed 2387379635586784424 with 12 workers on 12 cores with 3531MB heap and 64MB offheap memory [pid: 506149] (Linux 7.1.9-arch1-2 amd64, Arch Linux 17.0.20.1 64bit, MSBDiskFPSet, DiskStateQueue).
+Starting... (2026-09-08 15:05:04)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-09-08 15:05:04.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 5.4E-10
+  based on the actual fingerprints:  val = 6.6E-8
+373933 states generated, 345322 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 11.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 17 and the 95th percentile is 3).
+Finished in 03s at (2026-09-08 15:05:07)
