@@ -1,13 +1,15 @@
-"""R1: provenansen bounder auktoriteten, inte bara capabilityn.
+"""R1: provenance bounds authority, not just the capability.
 
-Fram till 2026-09-10 var principal_context.py doktrin utan verkan. Modulen
-definierade mandat, tak per mandat och monoton propagering till subagenter --
-och inget verdikt las den. En agent med ett capability upp till MEDIUM fick
-gora MEDIUM aven nar det mandat den arbetade under bara racker till LOW.
+Until 2026-09-10, principal_context.py was doctrine without effect. The
+module defined mandates, ceilings per mandate, and monotonic propagation to
+subagents -- and no verdict read it. An agent with a capability up to MEDIUM
+was allowed to do MEDIUM even when the mandate it was operating under only
+reached LOW.
 
-Kravet ur docs/ROADMAP.md R1: effektivt tak = min(capability.risk_ceiling,
-mandatets tak), contexten laest fran en bunden PrincipalContext, och ett
-SAKNAT context failar closed -- aldrig ett fallback till det mest tillatande.
+The requirement from docs/ROADMAP.md R1: effective ceiling =
+min(capability.risk_ceiling, the mandate's ceiling), the context read from a
+bound PrincipalContext, and a MISSING context fails closed -- never a
+fallback to the most permissive option.
 """
 
 import sys
@@ -28,7 +30,7 @@ from axiomgate_kernel.principal_context import (  # noqa: E402
 
 
 def strict():
-    """En mediator som kraver en bunden context. Samma bygge i ovrigt."""
+    """A mediator that requires a bound context. Same build otherwise."""
     mediator, agent_key, owner_key, audit, tmp = build()
     mediator.require_principal_context = True
     return mediator, agent_key, owner_key, audit, tmp
@@ -54,10 +56,11 @@ def execute(mediator, key, risk, action=ActionType.EXECUTE.value):
 # --- Det saknade contextet -------------------------------------------------
 
 def test_missing_context_is_denied_not_defaulted():
-    """Ingen bunden context far aldrig betyda 'inget tak'.
+    """No bound context must never mean 'no ceiling'.
 
-    Det ar hela skillnaden mellan fail-closed och fail-open: en integrator som
-    glommer att satta contexten ska stoppas, inte tyst fa den vidaste ramen.
+    That is the entire difference between fail-closed and fail-open: an
+    integrator who forgets to set the context should be stopped, not
+    silently given the widest frame.
     """
     mediator, agent_key, _o, _a, _t = strict()
     decision = execute(mediator, agent_key, RiskLevel.LOW.value)
@@ -67,7 +70,8 @@ def test_missing_context_is_denied_not_defaulted():
 
 
 def test_context_without_mandate_is_denied():
-    """Ett context utan mandat bar ingen ram. Modulen sager sjalv: must escalate."""
+    """A context without a mandate carries no frame. The module itself says:
+    must escalate."""
     mediator, agent_key, _o, _a, _t = strict()
     with principal_context_scope(ctx(None)):
         decision = execute(mediator, agent_key, RiskLevel.LOW.value)
@@ -76,9 +80,9 @@ def test_context_without_mandate_is_denied():
 
 
 def test_unparseable_mandate_is_denied():
-    """En mandatstrang som inte gar att tolka ar inte ett tomt mandat."""
+    """A mandate string that cannot be parsed is not an empty mandate."""
     mediator, agent_key, _o, _a, _t = strict()
-    with principal_context_scope(ctx("execute:expires:inte-ett-datum")):
+    with principal_context_scope(ctx("execute:expires:not-a-date")):
         decision = execute(mediator, agent_key, RiskLevel.LOW.value)
     assert decision.verdict is Verdict.DENY
     assert "authz.mandate_unparseable" in decision.applied_rules
@@ -95,11 +99,11 @@ def test_expired_mandate_is_denied():
 # --- Taket ----------------------------------------------------------------
 
 def test_mandate_ceiling_binds_below_the_capability():
-    """Capabilityn racker till MEDIUM, mandatet 'propose' bara till LOW.
+    """The capability reaches MEDIUM, the mandate 'propose' only reaches LOW.
 
-    PROPOSE ligger inom bada scopen -- det ar alltsa uteslutande RISKTAKET som
-    skiljer dem, vilket ar det testet ska prova. Utan R1 gav detta PERMIT:
-    capabilityn var det enda som raknades.
+    PROPOSE lies within both scopes -- so it is exclusively the RISK CEILING
+    that separates them, which is what this test is meant to prove. Without
+    R1 this gave PERMIT: the capability was the only thing that counted.
     """
     mediator, agent_key, _o, _a, _t = strict()
     with principal_context_scope(ctx("propose")):
@@ -107,15 +111,16 @@ def test_mandate_ceiling_binds_below_the_capability():
                            action=ActionType.PROPOSE.value)
     assert decision.verdict is Verdict.DENY
     assert "authz.provenance_risk_ceiling" in decision.applied_rules
-    # Inte capabilityns eget tak -- det klarade MEDIUM.
+    # Not the capability's own ceiling -- that one handled MEDIUM.
     assert "authz.risk_ceiling" not in decision.applied_rules
 
 
 def test_capability_still_binds_below_the_mandate():
-    """Taket ar ett minimum av tva, inte en ersattning av det ena.
+    """The ceiling is a minimum of two, not a replacement of one by the other.
 
-    Mandatet 'full' racker till HIGH, capabilityn bara till MEDIUM. HIGH ar
-    dessutom owner-mandatory, sa utfallet ar en eskalering -- inte ett lov.
+    The mandate 'full' reaches HIGH, the capability only MEDIUM. HIGH is
+    also owner-mandatory, so the outcome is an escalation -- not a
+    permission.
     """
     mediator, agent_key, _o, _a, _t = strict()
     with principal_context_scope(ctx("full")):
@@ -125,7 +130,7 @@ def test_capability_still_binds_below_the_mandate():
 
 
 def test_action_outside_the_mandate_is_denied():
-    """Mandatet 'read-only' racker inte till EXECUTE, hur capabilityn an ser ut."""
+    """The mandate 'read-only' does not reach EXECUTE, no matter the capability."""
     mediator, agent_key, _o, _a, _t = strict()
     with principal_context_scope(ctx("read-only")):
         decision = execute(mediator, agent_key, RiskLevel.LOW.value)
@@ -134,7 +139,7 @@ def test_action_outside_the_mandate_is_denied():
 
 
 def test_within_both_ceilings_still_permits():
-    """Kontrollen far inte vara ett generellt nej. 'execute' + LOW gar igenom."""
+    """The check must not be a blanket no. 'execute' + LOW goes through."""
     mediator, agent_key, _o, _a, _t = strict()
     with principal_context_scope(ctx("execute")):
         decision = execute(mediator, agent_key, RiskLevel.LOW.value)
@@ -145,9 +150,11 @@ def test_within_both_ceilings_still_permits():
 # --- Auditen --------------------------------------------------------------
 
 def test_the_audit_record_says_which_bound_applied():
-    """En lasare ska kunna se vilket tak som gallde, inte bara utfallet.
+    """A reader should be able to see which ceiling applied, not just the
+    outcome.
 
-    ROADMAP R1 villkor 2: provenansen och det effektiva taket skrivs in.
+    ROADMAP R1 condition 2: the provenance and the effective ceiling are
+    recorded.
     """
     mediator, agent_key, _o, audit, _t = strict()
     with principal_context_scope(ctx("propose", provenance="delegated")):
@@ -160,7 +167,7 @@ def test_the_audit_record_says_which_bound_applied():
 
 
 def test_a_missing_context_is_visible_in_the_audit_too():
-    """Det som nekades for att contexten saknades ska ga att se i loggen."""
+    """What was denied because the context was missing should show in the log."""
     mediator, agent_key, _o, audit, _t = strict()
     execute(mediator, agent_key, RiskLevel.LOW.value)
     entry = audit.entries()[-1]
@@ -168,14 +175,14 @@ def test_a_missing_context_is_visible_in_the_audit_too():
     assert entry["mandate_id"] is None
 
 
-# --- Bakatkompatibilitet ---------------------------------------------------
+# --- Backward compatibility -------------------------------------------------
 
 def test_the_default_mediator_is_unchanged():
-    """Flaggan ar av som standard: befintliga integratorer ser ingen skillnad.
+    """The flag is off by default: existing integrators see no difference.
 
-    Detta ar ett medvetet avsteg och det star utskrivet i ROADMAP R1 -- utan
-    flaggan finns inget provenanstak alls, och det ar en kand lucka, inte ett
-    smyghal.
+    This is a deliberate deviation and it is written out in ROADMAP R1 --
+    without the flag there is no provenance ceiling at all, and that is a
+    known gap, not a sneaked-in hole.
     """
     mediator, agent_key, _o, _a, _t = build()
     assert mediator.require_principal_context is False
@@ -184,7 +191,7 @@ def test_the_default_mediator_is_unchanged():
 
 
 def test_the_flag_can_be_set_at_construction():
-    """Den ska ga att satta dar mediatorn byggs, inte bara efterat."""
+    """It must be settable where the mediator is built, not only afterward."""
     from axiomgate_kernel import Mediator
     import inspect
     sig = inspect.signature(Mediator.__init__)
@@ -192,24 +199,26 @@ def test_the_flag_can_be_set_at_construction():
     assert sig.parameters["require_principal_context"].default is False
 
 
-# --- Auditposten beskriver den ram som faktiskt gallde ----------------------
+# --- The audit record describes the frame that actually applied ------------
 
 def test_a_swapped_context_cannot_rewrite_the_audit_record():
-    """Loggen pastod fel mandat om provenance-backenden bytte context under tiden.
+    """The log claimed the wrong mandate if the provenance backend swapped
+    the context in the meantime.
 
-    Fram till 2026-09-10 las _audit_record om den bundna contexten i stallet
-    for att bara med sig den CapabilityCheck som avgjort. Mellan de tva
-    raderna kor self._provenance.check() -- en INJICERAD beroende, samma
-    fortroendeniva som audit och authenticator. En backend som byter ut
-    contexten dar fick beslutet raknat pa ett mandat och loggat pa ett annat,
-    och en granskare kunde inte se vilken ram som gav tillstandet.
+    Until 2026-09-10, _audit_record re-read the bound context instead of
+    just carrying the CapabilityCheck that had already decided. Between
+    those two lines, self._provenance.check() runs -- an INJECTED
+    dependency, the same trust level as audit and authenticator. A backend
+    that swapped out the context there got the decision computed on one
+    mandate and logged on another, and a reviewer could not see which frame
+    granted the permission.
     """
     from axiomgate_kernel.provenance import ProvenanceKind, ProvenanceResult
 
     mediator, agent_key, _o, audit, _t = strict()
 
     class SwapsTheContext:
-        """En provenance-backend som byter mandat mitt i beslutet."""
+        """A provenance backend that swaps the mandate mid-decision."""
 
         def check(self):
             set_principal_context(ctx("read-only", provenance="delegated"))
@@ -223,20 +232,21 @@ def test_a_swapped_context_cannot_rewrite_the_audit_record():
 
     assert decision.verdict is Verdict.PERMIT
     entry = audit.entries()[-1]
-    # Beslutet rakandes under "full"/direct. Loggen ska saga samma sak.
+    # The decision was computed under "full"/direct. The log should say the same.
     assert entry["provenance"] == "direct"
     assert entry["mandate_id"].startswith("mandate-full-")
     assert entry["effective_risk_ceiling"] == "MEDIUM"
 
 
-# --- Samma krav pa reentry-vagen -------------------------------------------
+# --- The same requirement on the reentry path -------------------------------
 
 def strict_high():
-    """Som strict(), men agentens capability racker till HIGH.
+    """Like strict(), but the agent's capability reaches HIGH.
 
-    HIGH ar owner-mandatory: evaluate ger ESCALATE, owner reserverar, och
-    reenter ar da den enda vagen till PERMIT. Med MEDIUM-taket i build()
-    dor reentryn pa authz.risk_ceiling och PERMIT-vagen provas aldrig.
+    HIGH is owner-mandatory: evaluate gives ESCALATE, the owner reserves,
+    and reenter is then the only path to PERMIT. With the MEDIUM ceiling
+    from build(), the reentry dies on authz.risk_ceiling and the PERMIT
+    path is never exercised.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -265,10 +275,11 @@ def strict_high():
 
 
 def reserve_then_reenter(mediator, agent_key, owner_key, *, before_reenter=None):
-    """Kor hela cykeln evaluate -> decide_escalation -> reenter under mandat "full".
+    """Runs the full cycle evaluate -> decide_escalation -> reenter under the
+    mandate "full".
 
-    Samma request_id och payload i badge stegen: den reserverade granten
-    binder bada, sa en ny request_id skulle avvisas av consume_if_valid.
+    The same request_id and payload in both steps: the reserved grant binds
+    both, so a new request_id would be rejected by consume_if_valid.
     """
     from uuid import uuid4
 
@@ -297,13 +308,15 @@ def reserve_then_reenter(mediator, agent_key, owner_key, *, before_reenter=None)
 
 
 def test_reentry_permit_records_the_frame_it_was_granted_under():
-    """Reentry-PERMIT loggade None pa alla tre ramfalten -- utan nagon attack.
+    """Reentry PERMIT logged None on all three frame fields -- with no
+    attack involved.
 
-    frame tradades bara genom _evaluate_authenticated. I
-    _reenter_authenticated satt frame=check enbart pa DENY-grenen direkt
-    efter check_capability; PERMIT-vagen langre ner anropade _permit utan
-    frame. Checken KORDES och satte ramen -- posten bara tappade den, sa en
-    granskare av ett reentry-beslut kunde inte se vilket mandat som gallde.
+    frame was only threaded through _evaluate_authenticated. In
+    _reenter_authenticated, frame=check was set only on the DENY branch
+    right after check_capability; the PERMIT path further down called
+    _permit without frame. The check DID RUN and did set the frame -- the
+    record just dropped it, so a reviewer of a reentry decision could not
+    see which mandate applied.
     """
     mediator, agent_key, owner_key, audit, _t = strict_high()
 
@@ -317,10 +330,11 @@ def test_reentry_permit_records_the_frame_it_was_granted_under():
 
 
 def test_a_swapped_context_cannot_rewrite_the_reentry_audit_record():
-    """Samma attack som pa evaluate-vagen, men mot reentryn.
+    """The same attack as on the evaluate path, but against the reentry.
 
-    check_capability kor fore self._provenance.check() aven har, sa en
-    backend som byter context daremellan far inte flytta ramen i loggen.
+    check_capability runs before self._provenance.check() here too, so a
+    backend that swaps the context in between must not move the frame in
+    the log.
     """
     from axiomgate_kernel.provenance import ProvenanceKind, ProvenanceResult
 
@@ -344,12 +358,14 @@ def test_a_swapped_context_cannot_rewrite_the_reentry_audit_record():
 
 
 def test_a_reentry_denied_after_the_check_still_records_the_frame():
-    """Aven en DENY nedstroms checken ska beskriva ramen den domdes under.
+    """Even a DENY downstream of the check should describe the frame it was
+    judged under.
 
-    provenance.mismatch ligger efter check_capability: ramen ar raknad, det
-    ar provenansen som inte haller. Posten sa None pa alla tre ramfalten dar
-    ocksa. (En DENY UPPSTROMS checken -- t.ex. reentry.already_resolved --
-    ska daremot fortsatta saga None: ingen ram raknades.)
+    provenance.mismatch sits after check_capability: the frame has been
+    computed, it is the provenance that fails to hold. The record said
+    None on all three frame fields there too. (A DENY UPSTREAM of the
+    check -- e.g. reentry.already_resolved -- should instead keep saying
+    None: no frame was computed.)
     """
     from axiomgate_kernel.provenance import ProvenanceKind, ProvenanceResult
 
@@ -373,10 +389,12 @@ def test_a_reentry_denied_after_the_check_still_records_the_frame():
 
 
 def test_a_reentry_denied_before_the_check_records_no_frame():
-    """Motprovet: uppstroms checken finns ingen ram, och da ska den vara None.
+    """The counter-proof: upstream of the check there is no frame, and then
+    it should be None.
 
-    Att tacka hal med "skriv nagot" ar samma fel som att skriva 0 for ett
-    saknat varde. reentry.already_resolved domer innan check_capability kors.
+    Covering a gap with "write something" is the same mistake as writing 0
+    for a missing value. reentry.already_resolved decides before
+    check_capability runs.
     """
     mediator, agent_key, owner_key, audit, _t = strict_high()
 
@@ -399,15 +417,17 @@ def test_a_reentry_denied_before_the_check_records_no_frame():
 
 
 def test_an_out_of_scope_action_logs_no_effective_ceiling():
-    """Nekas handlingen pa scope har inget tak provats -- da far inget stå dar.
+    """If the action is denied on scope, no ceiling was ever tested -- so
+    nothing should stand there.
 
-    Fyndet 2026-09-10, samma familj som den falska sparbarheten: nar
-    'authz.mandate_action_out_of_scope' fallde skrev loggen CAPABILITYNS eget
-    tak i effective_risk_ceiling ('MEDIUM'), for att `ceiling` an inte hade
-    rakats om via effective_ceiling(). Posten pastod alltsa att MEDIUM var den
-    ram som gallde. Ingen ram gallde: beslutet togs innan nagon takjamforelse,
-    och mandatets eget tak kom aldrig in i bilden. Ett saknat varde ar inte ett
-    tak.
+    Finding 2026-09-10, same family as the false traceability: when
+    'authz.mandate_action_out_of_scope' fired, the log wrote the
+    CAPABILITY'S own ceiling into effective_risk_ceiling ('MEDIUM'),
+    because `ceiling` had not yet been recomputed via effective_ceiling().
+    The record therefore claimed MEDIUM was the frame that applied. No
+    frame applied: the decision was made before any ceiling comparison,
+    and the mandate's own ceiling never entered the picture. A missing
+    value is not a ceiling.
     """
     mediator, agent_key, _o, audit, _t = strict()
     with principal_context_scope(ctx("read-only")):
@@ -416,14 +436,14 @@ def test_an_out_of_scope_action_logs_no_effective_ceiling():
     assert "authz.mandate_action_out_of_scope" in decision.applied_rules
     entry = audit.entries()[-1]
     assert entry["effective_risk_ceiling"] is None
-    # Mandatet ar daremot kant och ska sta kvar: en lasare maste kunna se
-    # VILKET mandat som inte rackte till.
+    # The mandate, however, is known and should stay: a reader must be able
+    # to see WHICH mandate fell short.
     assert entry["mandate_id"].startswith("mandate-read-only-")
     assert entry["provenance"] == "direct"
 
 
 def test_an_expired_mandate_logs_no_effective_ceiling():
-    """Ett ogiltigt mandat bounder ingenting -- inte ens till sitt eget tak."""
+    """An invalid mandate bounds nothing -- not even to its own ceiling."""
     mediator, agent_key, _o, audit, _t = strict()
     with principal_context_scope(ctx("execute:expires:2020-01-01T00:00:00Z")):
         decision = execute(mediator, agent_key, RiskLevel.LOW.value)
@@ -435,10 +455,11 @@ def test_an_expired_mandate_logs_no_effective_ceiling():
 
 
 def test_the_ceiling_that_did_apply_is_still_written():
-    """Motprov: nar taket VERKLIGEN bound beslutet ska det inte bli None.
+    """Counter-proof: when the ceiling REALLY bound the decision, it must
+    not become None.
 
-    Utan detta kunde fixen ovan vara ett generellt None och testerna anda
-    passera.
+    Without this, the fix above could be a blanket None and the tests
+    would still pass.
     """
     mediator, agent_key, _o, audit, _t = strict()
     with principal_context_scope(ctx("propose")):
@@ -449,13 +470,15 @@ def test_the_ceiling_that_did_apply_is_still_written():
 
 
 def test_without_the_flag_no_effective_ceiling_is_claimed():
-    """Kravs ingen context finns inget effektivt tak -- docstringen sa det redan.
+    """When no context is required, there is no effective ceiling -- the
+    docstring already said so.
 
-    CapabilityCheck-docstringen har hela tiden pastatt att
-    `effective_risk_ceiling` ar None nar ingen context kravdes. Koden skrev
-    anda in capabilityns eget tak ('MEDIUM'), i det lage dar det per definition
-    inte finns nagon provenansram att rakna fram. Dokumentationen var ratt och
-    koden fel, inte tvartom.
+    The CapabilityCheck docstring has all along claimed that
+    `effective_risk_ceiling` is None when no context is required. The
+    code nonetheless wrote in the capability's own ceiling ('MEDIUM'), in
+    the very case where by definition there is no provenance frame to
+    compute. The documentation was right and the code was wrong, not the
+    other way around.
     """
     mediator, agent_key, _o, audit, _t = build()[:5]
     assert mediator.require_principal_context is False

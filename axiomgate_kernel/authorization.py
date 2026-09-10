@@ -2,10 +2,10 @@
 
 Internal capability check. Not a grant authority.
 
-Sedan 2026-09-10 bounder den ocksa auktoriteten av *hur* ett anrop uppstod,
-inte bara av vad agenten heter: det effektiva risktaket ar det lagsta av
-capabilityns eget tak och taket i det mandat den bundna PrincipalContext
-bar. Se docs/ROADMAP.md R1.
+Since 2026-09-10 it also bounds the authority by *how* a call arose, not
+just by what the agent is named: the effective risk ceiling is the lower of
+the capability's own ceiling and the ceiling carried by the mandate the
+bound PrincipalContext holds. See docs/ROADMAP.md R1.
 """
 
 from dataclasses import dataclass
@@ -41,12 +41,12 @@ class CapabilityDecision(Enum):
 class CapabilityCheck:
     """Result of a capability check.
 
-    `effective_risk_ceiling` ar None sa lange inget effektivt tak har raknats
-    fram: nar ingen context kravdes, och nar contexten avvisades innan nagon
-    takjamforelse skedde (saknat, otolkbart, ogiltigt eller ur-scope mandat).
-    Ett saknat varde ar inte ett tak, det ar frånvaron av ett. `mandate_id` ar
-    None till dess ett mandat har tolkats -- darefter star det kvar aven nar
-    mandatet nekades, sa att en lasare ser VILKET mandat som inte rackte.
+    `effective_risk_ceiling` is None as long as no effective ceiling has been
+    computed: when no context was required, and when the context was rejected before
+    any ceiling comparison took place (missing, unparseable, invalid, or out-of-scope
+    mandate). A missing value is not a ceiling, it is the absence of one. `mandate_id`
+    is None until a mandate has been parsed -- after that it stays set even when the
+    mandate was denied, so a reader sees WHICH mandate was not enough.
     """
     decision: CapabilityDecision
     reason: str
@@ -58,19 +58,19 @@ class CapabilityCheck:
 
 
 def _prov(ctx: Optional[PrincipalContext]) -> Optional[str]:
-    """Provenansen ur den context checken faktiskt provade mot, eller None.
+    """The provenance from the context the check actually tested against, or None.
 
-    Den fastnar i CapabilityCheck sa att auditposten slipper lasa om
-    contexten efterat -- se Mediator._audit_record.
+    It gets stuck onto CapabilityCheck so the audit record does not need to
+    re-read the context afterward -- see Mediator._audit_record.
     """
     return ctx.provenance if ctx is not None else None
 
 
 def bound_context() -> Optional[PrincipalContext]:
-    """Den bundna contexten, eller None. Far aldrig kasta.
+    """The bound context, or None. Must never throw.
 
-    ContextVar-lasningen ar injicerad omvarld pa samma satt som audit: den ska
-    inte kunna ta sig ut ur ett verdikt som ett undantag.
+    Reading the ContextVar is injected environment in the same way as audit:
+    it must not be able to escape a verdict as an exception.
     """
     try:
         return get_principal_context()
@@ -79,7 +79,7 @@ def bound_context() -> Optional[PrincipalContext]:
 
 
 def effective_ceiling(cap_ceiling: RiskLevel, mandate: Mandate) -> RiskLevel:
-    """Det lagsta av tva tak. En sanningskalla for minimum-regeln."""
+    """The lower of two ceilings. A single source of truth for the minimum rule."""
     return cap_ceiling if cap_ceiling.rank <= mandate.risk_ceiling.rank else mandate.risk_ceiling
 
 
@@ -105,10 +105,10 @@ def check_capability(
     """
     rules: List[str] = ["authz.entered"]
 
-    # R1. En obunden context ar ett grovre fel an ett saknat capability: den
-    # betyder att kernan inte vet hur anropet uppstod. Den far darfor aldrig
-    # falla tillbaka pa "inget tak" -- det vore fail-open i den ena riktning
-    # som ingen upptacker, eftersom utfallet da ser normalt ut.
+    # R1. An unbound context is a graver error than a missing capability: it
+    # means the kernel does not know how the call arose. It must therefore
+    # never fall back to "no ceiling" -- that would be fail-open in the one
+    # direction no one detects, since the outcome then looks normal.
     ctx = bound_context() if require_context else None
     if require_context and not is_principal_valid(ctx):
         rules.append("authz.no_principal_context")
@@ -200,20 +200,20 @@ def check_capability(
             capability.capability_id,
         )
 
-    # Fyndet 2026-09-10: den har radén var `capability.risk_ceiling`, och
-    # varje nedstroms retur som inte hann fram till effective_ceiling() skrev
-    # alltsa in CAPABILITYNS tak i ett falt som heter effective_risk_ceiling --
-    # bade nar mandatet nekades pa scope eller giltighet, och i hela det
-    # oflaggade laget dar det per definition inte finns nagon provenansram.
-    # Ett saknat varde ar inte ett tak. Nu satts `ceiling` av en enda kalla,
-    # effective_ceiling(), och ar None till dess den kort.
+    # The finding from 2026-09-10: this line used to be `capability.risk_ceiling`,
+    # so every downstream return that never reached effective_ceiling() was writing
+    # the CAPABILITY's ceiling into a field called effective_risk_ceiling -- both
+    # when the mandate was denied on scope or validity, and throughout the unflagged
+    # path where there is by definition no provenance frame at all. A missing value
+    # is not a ceiling. Now `ceiling` is set from a single source,
+    # effective_ceiling(), and is None until it is computed.
     ceiling: Optional[RiskLevel] = None
     mandate_id = None
     if require_context:
-        # Grinden hogst upp har redan avvisat ett ogiltigt context. Att fraga
-        # igen ar inte overflodigt: bar den ena grinden ensam blir ett saknat
-        # context ett AttributeError i stallet for ett verdikt, och ett
-        # 'fail-closed: ' utan reason ar inte ett svar en granskare kan lasa.
+        # The gate at the top has already rejected an invalid context. Asking
+        # again is not redundant: relying on that one gate alone would turn a
+        # missing context into an AttributeError instead of a verdict, and a
+        # 'fail-closed: ' with no reason is not an answer a reviewer can read.
         if ctx is None:
             rules.append("authz.no_principal_context")
             return CapabilityCheck(
@@ -228,9 +228,9 @@ def check_capability(
 
         mandate = parse_mandate(ctx.mandate)
         if mandate is None:
-            # parse_mandate returnerar None bade for okand scope och for en
-            # svans den inte kanner igen. Bada ar samma fel: strangen sager
-            # nagot vi inte kan prova, och da ar den inte ett mandat.
+            # parse_mandate returns None both for an unknown scope and for a
+            # tail it does not recognize. Both are the same error: the string
+            # says something we cannot verify, and then it is not a mandate.
             rules.append("authz.mandate_unparseable")
             return CapabilityCheck(
                 CapabilityDecision.DENY,

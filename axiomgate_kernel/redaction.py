@@ -18,9 +18,10 @@ _PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("AWS_ACCESS_KEY", re.compile(r"AKIA[0-9A-Z]{16}")),
     ("GOOGLE_AI", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
     ("HUGGINGFACE", re.compile(r"hf_[a-zA-Z0-9]{34,}")),
-    # sk_live_ har understreck och matchar därför INTE OPENAI-mönstret ovan.
-    # AxiomGate fakturerar självt via Stripe; en hårdkodad live-nyckel var det
-    # sista formatet som borde gå oupptäckt förbi CRED-001.
+    # sk_live_ has an underscore and therefore does NOT match the OPENAI
+    # pattern above. AxiomGate itself bills through Stripe; a hardcoded live
+    # key was the last format that should be allowed to slip past CRED-001
+    # undetected.
     ("STRIPE_SECRET", re.compile(r"sk_(live|test)_[a-zA-Z0-9]{20,}")),
     ("SLACK_TOKEN", re.compile(r"xox[baprs]-[a-zA-Z0-9]{10,}(-[a-zA-Z0-9]+)*")),
     ("PRIVATE_KEY", re.compile(r"-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----")),
@@ -71,23 +72,24 @@ def scan_for_secrets(text: str) -> List[dict]:
 
 
 def credential_pattern_count() -> int:
-    """Hur många kreditivformat DLP:n faktiskt känner igen.
+    """How many credential formats the DLP actually recognizes.
 
-    ZERO-LEAK-badgen i PDF:en namnger siffran för kunden. Den hämtas härifrån
-    i stället för att skrivas för hand, så att en badge aldrig kan påstå fler
-    format än _PATTERNS innehåller.
+    The ZERO-LEAK badge in the PDF names this figure for the customer. It is
+    fetched from here rather than written by hand, so that a badge can never
+    claim more formats than _PATTERNS actually contains.
     """
     return len(_PATTERNS)
 
 
-# Fältnamn vars VÄRDE alltid maskeras, oavsett hur värdet ser ut.
-# Formatmatchningen ovan frågar "ser värdet ut som en nyckel?". Den frågan har
-# inget svar för ett fritt lösenord som "hunter2". Namnet är då den enda
-# signalen som finns, och i en append-only HMAC-kedjad logg kan en läcka inte
-# städas bort i efterhand -- att redigera posten bryter kedjan som är beviset.
-# Därför fail-closed: hellre maskera ett harmlöst fält än arkivera en hemlighet
-# permanent. Substrängmatchning mot normaliserat namn, så att "db_secret",
-# "authToken" och "X-Api-Key" alla fångas.
+# Field names whose VALUE is always masked, regardless of what the value
+# looks like. The format matching above asks "does the value look like a
+# key?". That question has no answer for a free-form password like
+# "hunter2". The name is then the only signal there is, and in an
+# append-only HMAC-chained log a leak cannot be cleaned up after the fact --
+# editing the entry breaks the chain that is the evidence. Hence fail-closed:
+# better to mask a harmless field than to permanently archive a secret.
+# Substring matching against the normalized name, so that "db_secret",
+# "authToken", and "X-Api-Key" are all caught.
 _SENSITIVE_KEY_PARTS: Tuple[str, ...] = (
     "password", "passwd", "secret", "token", "apikey", "authorization",
     "credential", "privatekey", "passphrase", "sessionkey", "accesskey",
@@ -97,7 +99,7 @@ _KEY_NORMALISE = re.compile(r"[^a-z0-9]")
 
 
 def _is_sensitive_key(key: object) -> bool:
-    """True om fältnamnet i sig utpekar värdet som en hemlighet."""
+    """True if the field name itself marks the value as a secret."""
     if not isinstance(key, str):
         return False
     normalised = _KEY_NORMALISE.sub("", key.lower())
@@ -107,15 +109,16 @@ def _is_sensitive_key(key: object) -> bool:
 def redact_dict(d):
     """Recursively redact secrets in every string — dict keys included.
 
-    Nycklarna är inte dekoration: authority_graph.nodes har agent-id som nyckel,
-    och ett agent-id byggs av filens sökväg. En nyckel som bara kopierades rakt
-    igenom bar hemligheten in i report.json. Tupler tas med för att kunna
-    redigera SQL-parametrar i en enda punkt i ScanStore.
+    The keys are not decoration: authority_graph.nodes has the agent id as
+    its key, and an agent id is built from the file's path. A key that was
+    just copied straight through carried the secret into report.json. Tuples
+    are included so that SQL parameters can be redacted at a single point in
+    ScanStore.
 
-    Två oberoende regler gäller: värdets FORMAT (_PATTERNS) och fältets NAMN
-    (_SENSITIVE_KEY_PARTS). Namnregeln maskerar hela värdet utan att titta på
-    det, även när värdet inte är en sträng -- ett heltal eller en lista under
-    "api_key" är lika mycket en hemlighet som en sträng är.
+    Two independent rules apply: the value's FORMAT (_PATTERNS) and the
+    field's NAME (_SENSITIVE_KEY_PARTS). The name rule masks the entire value
+    without looking at it, even when the value is not a string -- an integer
+    or a list under "api_key" is just as much a secret as a string is.
     """
     if isinstance(d, dict):
         out = {}
@@ -135,28 +138,29 @@ def redact_dict(d):
 
 
 class _RedactingFilter(logging.Filter):
-    """Redigerar varje loggpost innan den når en handler.
+    """Redacts every log record before it reaches a handler.
 
-    Filtret sitter på loggaren, inte på anropsplatsen: en logger.error med
-    ett undantag i sig är samma felklass som en print till stderr, och den
-    fixas på samma ställe -- utgången. Utan konfigurerad handler skriver
-    Pythons lastResort posten rakt till stderr, så en oredigerad post är
-    en läcka även i en process som aldrig sätter upp loggning.
+    The filter sits on the logger, not at the call site: a logger.error with
+    an exception in it is the same class of bug as a print to stderr, and it
+    is fixed at the same place -- the exit point. Without a configured
+    handler, Python's lastResort writes the record straight to stderr, so an
+    unredacted record is a leak even in a process that never sets up logging.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = redact_secrets(str(record.msg))
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: _redigera_arg(v)
+                record.args = {k: _redact_arg(v)
                                for k, v in record.args.items()}
             else:
-                record.args = tuple(_redigera_arg(a) for a in record.args)
-        # Tracebacken ligger inte i msg utan i exc_info, och Formatter renderar
-        # den forst efter att filtret kort. Vi renderar den sjalva och cachar
-        # det redigerade resultatet i exc_text -- Formatter aterandvander
-        # exc_text nar det redan ar satt och ror da aldrig den raa texten.
-        # Galler bade logger.exception() och logger.error(..., exc_info=True).
+                record.args = tuple(_redact_arg(a) for a in record.args)
+        # The traceback does not live in msg but in exc_info, and Formatter
+        # only renders it after the filter has run. We render it ourselves
+        # and cache the redacted result in exc_text -- Formatter reuses
+        # exc_text once it is already set and then never touches the raw
+        # text. Applies to both logger.exception() and
+        # logger.error(..., exc_info=True).
         if record.exc_info:
             if not record.exc_text:
                 record.exc_text = "".join(
@@ -168,11 +172,11 @@ class _RedactingFilter(logging.Filter):
         return True
 
 
-def _redigera_arg(a: object) -> object:
-    """Tal lämnas som de är -- "%d" % "5" kastar TypeError.
+def _redact_arg(a: object) -> object:
+    """Numbers are left as they are -- "%d" % "5" raises TypeError.
 
-    Ett tal kan inte bära en nyckel, och att str():a det skulle fälla varje
-    %d- och %f-placeholder i en rad som aldrig var en läcka.
+    A number cannot carry a key, and str()-ing it would break every %d and
+    %f placeholder in a line that was never a leak.
     """
     if isinstance(a, bool) or not isinstance(a, (int, float, complex)):
         return redact_secrets(str(a))
@@ -180,10 +184,10 @@ def _redigera_arg(a: object) -> object:
 
 
 def get_redacting_logger(name: str) -> logging.Logger:
-    """Loggaren för name, med redigeringen påsatt en gång.
+    """The logger for name, with redaction attached exactly once.
 
-    En sanningskälla för vad som får lämna processen via logging -- använd
-    aldrig logging.getLogger direkt i src/.
+    A single source of truth for what is allowed to leave the process via
+    logging -- never use logging.getLogger directly in src/.
     """
     lg = logging.getLogger(name)
     if not any(isinstance(f, _RedactingFilter) for f in lg.filters):

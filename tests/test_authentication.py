@@ -213,30 +213,30 @@ class TestIdentityBinding:
         assert result.principal.principal_id == "agent-a"
 
 
-class TestNonceTrackerTradsakerhet:
-    """consume() läser och skriver _seen_by_principal utan lås.
+class TestNonceTrackerThreadSafety:
+    """consume() reads and writes _seen_by_principal without a lock.
 
-    Mellan `if nonce in seen` och `seen[nonce] = ts` finns ett fönster där en
-    andra tråd hinner passera samma kontroll. Två samtidiga anrop med samma
-    nonce kan då båda returnera True — replay-spärren är den enda kontrollen
-    mot uppspelning av ett signerat godkännande.
+    Between `if nonce in seen` and `seen[nonce] = ts` there is a window where
+    a second thread can slip past the same check. Two concurrent calls with
+    the same nonce can then both return True -- the replay guard is the only
+    control against replaying a signed approval.
     """
 
-    def test_samtidiga_anrop_med_samma_nonce_ger_exakt_en_true(self):
+    def test_concurrent_calls_with_the_same_nonce_yield_exactly_one_true(self):
         import sys
         import threading
         from concurrent.futures import ThreadPoolExecutor
 
-        # Fönstret mellan kontroll och skrivning är få bytecodes; med default
-        # switchinterval träffas det nästan aldrig. Tvinga fram trådbytet.
-        gammalt_intervall = sys.getswitchinterval()
+        # The window between check and write is a few bytecodes; with the
+        # default switchinterval it is almost never hit. Force the thread switch.
+        old_interval = sys.getswitchinterval()
         sys.setswitchinterval(1e-6)
         try:
-            self._kor_racet()
+            self._run_the_race()
         finally:
-            sys.setswitchinterval(gammalt_intervall)
+            sys.setswitchinterval(old_interval)
 
-    def _kor_racet(self):
+    def _run_the_race(self):
         import threading
         from concurrent.futures import ThreadPoolExecutor
 
@@ -245,13 +245,13 @@ class TestNonceTrackerTradsakerhet:
             ts = datetime.now(timezone.utc).isoformat()
             start = threading.Barrier(16)
 
-            def forsok():
+            def attempt():
                 start.wait()
-                return nt.consume("p-1", "nonce-delad", ts)
+                return nt.consume("p-1", "nonce-shared", ts)
 
             with ThreadPoolExecutor(max_workers=16) as pool:
-                utfall = list(pool.map(lambda _: forsok(), range(16)))
+                outcomes = list(pool.map(lambda _: attempt(), range(16)))
 
-            assert sum(utfall) == 1, (
-                f"{sum(utfall)} trådar konsumerade samma nonce samtidigt"
+            assert sum(outcomes) == 1, (
+                f"{sum(outcomes)} threads consumed the same nonce concurrently"
             )

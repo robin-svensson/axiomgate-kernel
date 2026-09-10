@@ -1,31 +1,35 @@
 #!/usr/bin/env bash
-# Bevisar README:s pastaende om en ren miljo genom att bygga en.
+# Proves README's claim of a clean environment by building one.
 #
-# En L6-granskning 2026-09-10 papekade att README hävdade "the suite was run in a
-# fresh virtual environment" direkt ovanfor meningen "Nothing in this repository
-# asks to be believed" -- och att just det pastaendet inte kunde koras. Skriptet
-# verify_claims.sh kor alltid mot samma fasta venv och kan darfor aldrig visa det.
+# An L6 review 2026-09-10 pointed out that README claimed "the suite was run in a
+# fresh virtual environment" directly above the sentence "Nothing in this repository
+# asks to be believed" -- and that this exact claim could not be run. The script
+# verify_claims.sh always runs against the same fixed venv and can therefore never
+# show it.
 #
-# Detta skript ar medvetet skilt fran verify_claims.sh: det kraver natverk och tar
-# tiotalet sekunder, och en verifiering som ar for langsam att kora slutar koras.
-# Kor det nar beroendena eller paketeringen andras.
+# This script is deliberately separate from verify_claims.sh: it requires the
+# network and takes a dozen or so seconds, and a verification that is too slow to
+# run stops being run.
+# Run it when the dependencies or the packaging change.
 #
-# Ingen forvantad testsiffra star har. Sviten ar sanningskallan for hur manga tester
-# den har; skriptet kraver att noll faller och att antalet ar storre an noll.
+# No expected test count appears here. The suite is the source of truth for how
+# many tests it has; the script only requires that zero fail and that the count is
+# greater than zero.
 set -uo pipefail
 
 VENV="$(mktemp -d)/venv"
 trap 'rm -rf "$(dirname "$VENV")"' EXIT
 
-echo "== Ren venv i $VENV =="
-python3 -m venv "$VENV" || { echo "FAIL: kunde inte skapa venv"; exit 1; }
+echo "== Clean venv at $VENV =="
+python3 -m venv "$VENV" || { echo "FAIL: could not create venv"; exit 1; }
 
-echo "== Installerar paketet och dess dev-beroenden =="
-"$VENV/bin/pip" install -q -e ".[dev]" || { echo "FAIL: installationen gick inte"; exit 1; }
+echo "== Installing the package and its dev dependencies =="
+"$VENV/bin/pip" install -q -e ".[dev]" || { echo "FAIL: install failed"; exit 1; }
 
-# env -i tommer miljon helt: ingen PYTHONPATH, inget arv fran utvecklarskalet.
-# Da mater vi paketeringen, inte den maskin som rakar kora skriptet.
-echo "== Kor sviten utan PYTHONPATH och utan arvd miljo =="
+# env -i empties the environment completely: no PYTHONPATH, no inheritance from
+# the developer shell. That way we measure the packaging, not the machine that
+# happens to run the script.
+echo "== Running the suite without PYTHONPATH and without an inherited environment =="
 OUT="$(env -i "$VENV/bin/python" -m pytest -q 2>&1 | tail -3)"
 echo "$OUT"
 
@@ -34,7 +38,7 @@ FAILED="$(echo "$OUT" | grep -oE '[0-9]+ (failed|error)' | grep -oE '[0-9]+' | h
 
 echo
 if [ -n "${FAILED:-}" ] || [ -z "${PASSED:-}" ] || [ "$PASSED" -eq 0 ]; then
-  echo "-------- FAIL: ren installation ar inte gron --------"
+  echo "-------- FAIL: the clean install is not green --------"
   exit 1
 fi
-echo "-------- PASS: $PASSED tester passerade i en ren venv --------"
+echo "-------- PASS: $PASSED tests passed in a clean venv --------"

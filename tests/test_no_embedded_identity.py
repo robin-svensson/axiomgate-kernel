@@ -7,6 +7,8 @@ approver was a *stranger's* identity shipped inside the package. That is
 fail-open against an outside party -- the opposite of what the rest of the
 kernel does. Absence of an owner must refuse, not substitute one.
 """
+import ast
+import importlib.util
 import os
 import pathlib
 import re
@@ -53,26 +55,32 @@ def test_no_platform_user_id_is_embedded_in_the_package(path):
     assert not hits, f"{path.name} embeds identity-like value(s): {hits}"
 
 
-# Every home-directory default the package writes, in either spelling:
-# `~/.something` in a docstring, or `Path.home() / ".something"` in code.
-_DOTDIR = r'\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*'
-_HOME_DOTDIR = re.compile(rf'~/({_DOTDIR})|Path\.home\(\)\s*/\s*"({_DOTDIR})"')
-
-# The one directory this package owns. Anything else is another tool's.
-OWN_DOTDIR = ".axiomgate-kernel"
+# The rule for what counts as a foreign home directory lives in one place --
+# scripts/check_dotdirs.py -- and is loaded here rather than restated, so the
+# test and scripts/verify_claims.sh cannot drift apart on what the rule is.
+_spec = importlib.util.spec_from_file_location(
+    "check_dotdirs",
+    pathlib.Path(__file__).resolve().parent.parent / "scripts" / "check_dotdirs.py",
+)
+_dotdirs = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_dotdirs)
 
 
 @pytest.mark.parametrize("path", sorted(PKG.rglob("*.py")), ids=lambda p: p.name)
 def test_no_foreign_home_directory_is_embedded(path):
-    """The package may default into its own dot directory and no one else's.
+    """The package may root itself in its own dot directory and no one else's.
 
     Bug this guard exists for: config.py defaulted into a private tool
     environment on the author's machine, so a fresh install read and wrote keys
-    somewhere the installing user had never heard of. Naming that one directory
-    in the assertion would only catch that one directory -- and would carry the
-    name into a public repository. Any foreign dot directory is the bug.
+    somewhere the installing user had never heard of.
+
+    The guard itself has had two bugs worth remembering. Naming that one
+    directory in the assertion caught only that directory -- and carried an
+    internal name into a public repository. Replacing it with a regex over the
+    source text then let six of eight spellings through, because a regex sees
+    how the string is *written* and the question is which directory the package
+    *lands in*. The rule now reads the file as a syntax tree.
     """
-    text = path.read_text(encoding="utf-8")
-    found = {a or b for a, b in _HOME_DOTDIR.findall(text)}
-    foreign = sorted(d for d in found if d != OWN_DOTDIR)
-    assert not foreign, f"{path.name} defaults into {foreign}, not ~/{OWN_DOTDIR}"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    foreign = sorted(r for r in _dotdirs.home_roots(tree) if r != _dotdirs.OWN)
+    assert not foreign, f"{path.name} roots itself in {foreign}, not ~/{_dotdirs.OWN}"

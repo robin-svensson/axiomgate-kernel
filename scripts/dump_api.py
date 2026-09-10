@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Dumpa det publika API:t direkt ur det installerade paketet.
+"""Dump the public API straight from the installed package.
 
-docs/API.md ska stämma med utdata härifrån. Skriv aldrig av en signatur
-för hand — kör detta och jämför.
+docs/API.md should match the output from here. Never hand-copy a
+signature -- run this and compare.
 """
 import inspect
 import sys
@@ -19,9 +19,9 @@ TARGETS = [
 
 
 def main() -> int:
-    print(f"# Publikt API — {len(axiomgate_kernel.__all__)} namn i __all__")
+    print(f"# Public API -- {len(axiomgate_kernel.__all__)} names in __all__")
     print()
-    print("## Enums och konstanter")
+    print("## Enums and constants")
     for name in axiomgate_kernel.__all__:
         obj = getattr(axiomgate_kernel, name)
         if inspect.isclass(obj) and issubclass(obj, __import__("enum").Enum):
@@ -29,11 +29,11 @@ def main() -> int:
     print(f"  OWNER_PRINCIPAL_ID = {axiomgate_kernel.OWNER_PRINCIPAL_ID!r}")
     print(f"  OWNER_MANDATORY_ACTIONS = {sorted(axiomgate_kernel.OWNER_MANDATORY_ACTIONS)}")
     print()
-    print("## Klasser")
+    print("## Classes")
     for target in TARGETS:
         obj = getattr(axiomgate_kernel, target, None)
         if obj is None:
-            print(f"### {target}  (SAKNAS)")
+            print(f"### {target}  (MISSING)")
             continue
         print(f"### {target}")
         for name, member in inspect.getmembers(obj, predicate=inspect.isfunction):
@@ -42,10 +42,10 @@ def main() -> int:
             sig = str(inspect.signature(member)).replace("self, ", "").replace("self", "")
             print(f"    {name}{sig}")
     print()
-    # Fria funktioner dumpades inte förut, och därför kunde de handskrivna
-    # raderna i API.md:s "Identity and capability" glida oupptäckt — tre av dem
-    # hade gjort det när en granskare läste dokumentet 2026-09-10.
-    print("## Fria funktioner")
+    # Free functions were not dumped before, and so the handwritten lines in
+    # API.md's "Identity and capability" section could drift undetected --
+    # three of them had when a reviewer read the document on 2026-09-10.
+    print("## Free functions")
     for name in sorted(axiomgate_kernel.__all__):
         obj = getattr(axiomgate_kernel, name)
         if inspect.isfunction(obj):

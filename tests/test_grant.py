@@ -162,12 +162,13 @@ class TestGrantBinding:
 
 
 class TestReasonClassSkips:
-    """Vilka bindningar som slapps per reason class -- och vilka som inte gor det.
+    """Which bindings are skipped per reason class -- and which are not.
 
-    Buggen: dokumentationen pastod att tva falt hoppas over vid POLICY och
-    PROVENANCE. Koden hoppar tre -- aven capability_id och capability_scope --
-    och det var varken kommenterat eller testat. Ett odokumenterat undantag i
-    en sakerhetskontroll ar ett undantag ingen granskar.
+    The bug: the documentation claimed two fields are skipped for POLICY and
+    PROVENANCE. The code skips three -- also capability_id and
+    capability_scope -- and that was neither commented nor tested. An
+    undocumented exception in a security check is an exception nobody
+    reviews.
     """
 
     def _store(self):
@@ -203,7 +204,7 @@ class TestReasonClassSkips:
         (ReasonClass.PROVENANCE, "capability_scope_hash"),
     ])
     def test_skipped_field_does_not_block(self, reason_class, field):
-        """De tre bindningar som slapps per klass hindrar inte inlosen."""
+        """The three bindings skipped per class do not block redemption."""
         s = self._store()
         self._pending(s, reason_class)
         assert self._consume(s, **{field: "changed"}).consumed is True
@@ -214,7 +215,7 @@ class TestReasonClassSkips:
         "risk_level", "payload_hash",
     ])
     def test_remaining_bindings_still_hold(self, reason_class, field):
-        """De atta som ar kvar binder fortfarande -- undantaget ar smalt."""
+        """The eight that remain still bind -- the exception is narrow."""
         s = self._store()
         self._pending(s, reason_class)
         with pytest.raises(GrantError, match="grant binding mismatch"):
@@ -224,7 +225,7 @@ class TestReasonClassSkips:
         "policy_hash", "provenance_identity", "capability_id", "capability_scope_hash",
     ])
     def test_nothing_is_skipped_for_other_classes(self, field):
-        """Utan policy-/provenansorsak binder alla elva."""
+        """Without a policy/provenance reason, all eleven bind."""
         s = self._store()
         self._pending(s, ReasonClass.OWNER_MANDATORY_ACTION)
         with pytest.raises(GrantError, match="grant binding mismatch"):

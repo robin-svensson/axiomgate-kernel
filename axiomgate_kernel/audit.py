@@ -23,18 +23,18 @@ class AuditError(Exception):
 
 
 def anchor_covers(count: int, anchor_count: int) -> bool:
-    """Racker loggens langd till for att ens innehalla den ankrade kedjan?
+    """Is the log even long enough to contain the anchored chain?
 
-    Egen funktion for att den ska ga att stryka i ett mutationstest --
-    scripts/mutate_r2.py. Ett skydd som aldrig setts falla ar inte visat.
+    Kept as its own function so it can be struck out in a mutation test --
+    scripts/mutate_r2.py. A protection never seen to fail has not been shown.
     """
     return count >= anchor_count
 
 
 def anchor_matches(at_anchor: Optional[str], anchor_head: Optional[str]) -> bool:
-    """Ar posten pa den ankrade positionen den ankrade posten?
+    """Is the entry at the anchored position the anchored entry?
 
-    Samma skal till egen funktion som anchor_covers.
+    Same reason for its own function as anchor_covers.
     """
     return at_anchor == anchor_head
 
@@ -57,15 +57,15 @@ class AuditLog:
         writer: Optional[Callable[[str, str], None]] = None,
         anchor: Optional[Tuple[Optional[str], int]] = None,
     ) -> None:
-        """`anchor` ar ett tidigare head() som hallits utanfor loggfilen.
+        """`anchor` is a prior head() that was kept outside the log file.
 
-        Anges det maste den befintliga filen BORJA med den ankrade kedjan,
-        annars vagrar loggen oppna. Det ar det enda tillfalle en kapad svans
-        annars aldrig upptacks: _replay() laser en avhuggen kedja utan att
-        klaga, eftersom en avhuggen kedja ar internt konsistent.
+        If given, the existing file MUST START with the anchored chain, or the
+        log refuses to open. This is the only case where a truncated tail
+        would otherwise never be detected: _replay() reads a chopped chain
+        without complaint, because a chopped chain is internally consistent.
 
-        Utan ankare ar beteendet oforandrat -- en deklarerad lucka, samma
-        sorts grans som require_principal_context. Se docs/ROADMAP.md R2.
+        Without an anchor, behavior is unchanged -- a declared gap, the same
+        kind of boundary as require_principal_context. See docs/ROADMAP.md R2.
         """
         if not mac_key:
             raise AuditError("audit MAC key must be initialized before any write")
@@ -80,8 +80,8 @@ class AuditLog:
             os.makedirs(directory, exist_ok=True)
         if os.path.exists(path):
             self._replay()
-        # Efter lakningen, aldrig fore: forsvann en ankrad post med den
-        # ofullstandiga sista raden ar det ett fynd, inte en aterhamtning.
+        # After healing, never before: if an anchored entry disappeared along
+        # with the incomplete last line, that is a finding, not a recovery.
         if anchor is not None:
             ok, msg, _last, _count = self.verify_prefix(*anchor)
             if not ok:
@@ -90,10 +90,10 @@ class AuditLog:
     def _replay(self) -> None:
         """Replay existing audit log to establish chain state."""
         ok, msg, last, count = self.verify_integrity()
-        # Trunkering — en krasch mitt i en skrivning — rapporteras av
-        # verify_integrity som "tail malformation" (sista raden är ofullständig
-        # JSON utan något efter sig). En tidigare OR-gren letade efter
-        # "truncation:", en sträng ingen emitter skriver; den var död kod.
+        # Truncation -- a crash mid-write -- is reported by verify_integrity
+        # as "tail malformation" (the last line is incomplete JSON with
+        # nothing after it). An earlier OR branch looked for "truncation:", a
+        # string no emitter writes; it was dead code.
         recoverable = (not ok) and ("tail malformation" in msg)
         if (not ok) and "legacy chain format" in msg:
             raise AuditError(
@@ -139,19 +139,19 @@ class AuditLog:
         with self._lock:
             if not self._mac_key:
                 raise AuditError("audit MAC key missing")
-            # Sju anropsställen lägger in fritext här: taggen f"repo:{repo_path}"
-            # bär kundens sökväg, f"error:{str(e)}" bär vad undantaget råkade
-            # innehålla. Inget av det ligger i report, så redact_dict(report)
-            # täckte det aldrig. Loggen är hash-kedjad och HMAC-skyddad -- en
-            # nyckel som hamnat här går inte att städa bort i efterhand -- så
-            # redigeringen sitter på skrivpunkten, före hashberäkningen, och
-            # gäller därmed varje anropare och varje framtida fält.
+            # Seven call sites put free text in here: the tag f"repo:{repo_path}"
+            # carries the customer's path, f"error:{str(e)}" carries whatever the
+            # exception happened to contain. None of that lives in report, so
+            # redact_dict(report) never covered it. The log is hash-chained and HMAC-
+            # protected -- a key that ends up here cannot be cleaned out after the fact
+            # -- so the redaction sits at the write point, before the hash computation,
+            # and therefore applies to every caller and every future field.
             record = redact_dict(record)
             body = {k: v for k, v in record.items() if k not in HASH_MAC_FIELDS}
             body["previous_hash"] = self._last_hash
-            # Positionen ingar i det hashade innehallet. Utan den kan en kapad
-            # svans inte skiljas fran en logg som aldrig varit langre -- se
-            # verify_integrity och head().
+            # The position is part of the hashed content. Without it, a
+            # truncated tail cannot be distinguished from a log that was
+            # never any longer -- see verify_integrity and head().
             body["seq"] = self._count
             entry_hash = sha256_hex(canonical_bytes(body))
             mac = hmac_sha256_hex(self._mac_key, canonical_bytes({**body, "entry_hash": entry_hash}))
@@ -208,8 +208,8 @@ class AuditLog:
     def head(self) -> Tuple[Optional[str], int]:
         """Return (last_entry_hash, entry_count) -- the anchor for this log.
 
-        Spara det har utanfor loggfilen. Det ar det enda som gor en kapad
-        svans upptackbar: kedjan i sig kan inte bevisa hur lang den ska vara.
+        Save this outside the log file. It is the only thing that makes a truncated
+        tail detectable: the chain itself cannot prove how long it is supposed to be.
         """
         with self._lock:
             return self._last_hash, self._count
@@ -221,9 +221,9 @@ class AuditLog:
     ) -> Tuple[bool, str, Optional[str]]:
         """Verify audit chain integrity. Returns (ok, message, last_hash).
 
-        Utan forankring bevisas bara att posterna som finns lanker rätt bakat.
-        Ange expected_head/expected_count fran ett tidigare head()-anrop for
-        att aven upptacka att slutet har kapats.
+        Without anchoring, this only proves that the entries present link
+        correctly backward. Pass expected_head/expected_count from a prior
+        head() call to also detect that the end has been truncated.
         """
         ok, msg, last, _count = self.verify_integrity(expected_head, expected_count)
         return ok, msg, last
@@ -233,25 +233,25 @@ class AuditLog:
         anchor_head: Optional[str] = None,
         anchor_count: Optional[int] = None,
     ) -> Tuple[bool, str, Optional[str], int]:
-        """Borjar loggen med den kedja ankaret beskriver? (ok, msg, last, count)
+        """Does the log begin with the chain the anchor describes? (ok, msg, last, count)
 
-        verify_chain svarar pa en annan fraga -- "ar detta EXAKT loggen jag
-        ankrade?" -- och den gar inte att stalla om en logg som fortfarande
-        anvands: nasta post gor svaret nej, och "log longer than anchor" ar
-        da inte ett fynd utan bara att tiden gatt. Den har metoden later
-        loggen ha vuxit, men kraver att posten pa den ankrade positionen ar
-        den ankrade posten.
+        verify_chain answers a different question -- "is this EXACTLY the
+        log I anchored?" -- and that cannot be asked of a log still in use:
+        the next entry makes the answer no, and "log longer than anchor" is
+        then not a finding but just that time has passed. This method lets
+        the log have grown, but requires that the entry at the anchored
+        position be the anchored entry.
 
-        Bada halvorna av ankaret kravs. En hash utan position sager inte var
-        den skulle sitta, och en position utan hash sager inte vad som skulle
-        sta dar -- ett halvt ankare ar inget ankare, och far darfor inte
-        besvaras med ok.
+        Both halves of the anchor are required. A hash without a position
+        does not say where it should sit, and a position without a hash does
+        not say what should be there -- half an anchor is no anchor, and
+        must therefore not be answered with ok.
         """
-        # Granskningsfynd 2026-09-10: ett ogiltigt anchor_count var tekniskt
-        # 'not None', slapp forbi halvankarkontrollen nedan och foll ut som
-        # 'prefix mismatch: ... the log was replaced'. Kontrollen nekade ratt,
-        # men meddelandet pastod manipulation dar felet var i anropet. Ett
-        # anropsfel far inte lasas som ett fynd.
+        # Review finding 2026-09-10: an invalid anchor_count was technically
+        # 'not None', slipped past the half-anchor check below, and fell
+        # through as 'prefix mismatch: ... the log was replaced'. The check
+        # denied correctly, but the message claimed tampering when the error
+        # was in the call. A caller error must not be read as a finding.
         if anchor_count is not None and anchor_count < 0:
             return (
                 False,
@@ -270,9 +270,9 @@ class AuditLog:
             )
         if anchor_head is None or anchor_count is None:
             if anchor_head is None and anchor_count == 0:
-                # Ett ankare taget fore forsta posten. Aktarligt svar: det
-                # finns inget att jamfora mot, sa ingen kapning kan
-                # upptackas. Det ar inte ett fel -- men det ar inte ett bevis.
+                # An anchor taken before the first entry. Honest answer: there
+                # is nothing to compare against, so no truncation can be
+                # detected. It is not an error -- but it is not proof either.
                 _ok, msg, last, count, _at = self._verify_links()
                 if not _ok:
                     return _ok, msg, last, count
@@ -356,13 +356,14 @@ class AuditLog:
         self,
         note_after: Optional[int] = None,
     ) -> Tuple[bool, str, Optional[str], int, Optional[str]]:
-        """Ga kedjan igenom en gang. En sanningskalla for lankverifieringen.
+        """Walk the chain once. A single source of truth for link verification.
 
-        Returnerar (ok, msg, last_hash, count, hash_after_note_after) -- det
-        sista ar hashen pa posten vid index note_after - 1, alltsa den post
-        ett ankare med den langden ska peka pa. None om filen slutade forst.
+        Returns (ok, msg, last_hash, count, hash_after_note_after) -- the
+        last item is the hash of the entry at index note_after - 1, i.e. the
+        entry an anchor of that length should point to. None if the file
+        ended first.
 
-        Anropas under self._lock av bade verify_integrity och verify_prefix.
+        Called under self._lock by both verify_integrity and verify_prefix.
         """
         if not os.path.exists(self.path):
             return True, "empty", None, 0, None
@@ -386,12 +387,12 @@ class AuditLog:
                 if entry.get("previous_hash") != prev:
                     return False, f"previous_hash mismatch at {index}", last, count, at_note
                 if "seq" not in entry:
-                    # Posten skrevs innan sekvensnumret ingick i det hashade
-                    # innehallet. Den kan inte efterhandsforses med ett -- da
-                    # andras hashen -- och en sadan kedja kan alltsa inte
-                    # provas mot kapning. Det ar ett formatbyte, inte
-                    # manipulation, och skiljs darfor ut med ett eget
-                    # meddelande.
+                    # The entry was written before the sequence number was
+                    # part of the hashed content. It cannot be retrofitted
+                    # with one -- that would change the hash -- so such a
+                    # chain cannot be checked for truncation. It is a format
+                    # change, not tampering, and is therefore distinguished
+                    # with its own message.
                     return (
                         False,
                         f"legacy chain format at {index}: entry predates "

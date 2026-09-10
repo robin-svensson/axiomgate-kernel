@@ -34,10 +34,10 @@ from .canonical import canonical_bytes, canonical_json
 logger = get_redacting_logger(__name__)
 
 DEFAULT_KEY_ID = "ed25519-v1"
-# Ingen inbyggd agare. En hardkodad default gjorde en frammande identitet till
-# enda betrodda godkannare i varje installation som inte konfigurerade nagot --
-# fail-open mot en utomstaende, i den enda kontrollen som avgor godkannande.
-# Frnavaro av agare ar frnavaro, inte ett varde som far substitueras.
+# No built-in owner. A hardcoded default made a stranger's identity the
+# sole trusted approver in every installation that did not configure one --
+# fail-open toward an outsider, in the one control that decides approval.
+# Absence of an owner is absence, not a value that may be substituted.
 DEFAULT_MAX_TTL_SECONDS = 300
 
 
@@ -533,10 +533,10 @@ class ApprovalVerifier:
                         )
                     except Exception as _aud_err:
                         logger.error("Approval audit logging error: %s", _aud_err)
-                        # Backa konsumtionen. Godkännandet gick aldrig igenom,
-                        # så nonce och escalation-id får inte förbli brända —
-                        # annars avvisas det legitima omförsöket som replay och
-                        # åtgärden kan aldrig genomföras.
+                        # Roll back the consumption. The approval never went
+                        # through, so the nonce and escalation id must not stay
+                        # burned -- otherwise the legitimate retry is rejected
+                        # as a replay and the action can never be carried out.
                         self._consumed_nonces.pop(nonce, None)
                         self._consumed_escalations.discard(payload_esc_id)
                         return ApprovalVerificationResult(

@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 
 from .approval import generate_approval_keypair
 
-# Se approval.py: ingen inbyggd agaridentitet far folja med paketet.
+# See approval.py: no built-in owner identity may ship with the package.
 
 # Process-level key cache
 _cached_public_key: Optional[bytes] = None
@@ -32,8 +32,9 @@ def _reset_context_for_testing() -> None:
 def get_home() -> Path:
     """Return the directory AxiomGate Kernel keeps approval keys in.
 
-    Defaultar till ~/.axiomgate-kernel. Tidigare pekade den in i en privat verktygsmiljo,
-    vilket lade en kunds nycklar i en katalog uppkallad efter nagon annans system.
+    Defaults to ~/.axiomgate-kernel. It used to point into a private tooling
+    environment, which put a customer's keys in a directory named after
+    someone else's system.
     """
     from pathlib import Path
     env_home = os.environ.get("AXIOMGATE_KERNEL_HOME")
@@ -55,7 +56,7 @@ def get_private_key_path() -> Path:
 def get_owner_id() -> Optional[str]:
     """Return the configured Owner id, or None if none is configured.
 
-    Ett saknat varde ar None, aldrig en substituerad identitet.
+    A missing value is None, never a substituted identity.
     """
     return os.environ.get("AXIOMGATE_OWNER_ID") or None
 

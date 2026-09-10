@@ -434,16 +434,17 @@ class TestSQLiteConcurrency:
         store.commit()
 
 
-class TestRevokeBevararIntegritetshash:
-    """revoke() skriver revoked_at men räknar aldrig om integrity_hash.
+class TestRevokePreservesIntegrityHash:
+    """revoke() writes revoked_at but never recomputes integrity_hash.
 
-    revoked_at ingår i persist_data som hashas vid store (persistence.py:136),
-    så en UPDATE av kolumnen gör den lagrade hashen fel. verify_integrity()
-    returnerar False vid första avvikande raden — en enda återkallad behörighet
-    får alltså hela kapabilitetslagret att rapportera manipulation.
+    revoked_at is part of persist_data, which is hashed on store
+    (persistence.py:136), so an UPDATE of the column makes the stored hash
+    wrong. verify_integrity() returns False on the first mismatching row --
+    a single revoked capability therefore makes the entire capability store
+    report tampering.
     """
 
-    def test_verify_integrity_haller_efter_revoke(self, tmp_path):
+    def test_verify_integrity_holds_after_revoke(self, tmp_path):
         now = datetime.now(timezone.utc)
         store = CapabilityStore(str(tmp_path / "caps.db"))
         cap = make_capability(
@@ -458,10 +459,10 @@ class TestRevokeBevararIntegritetshash:
 
         store.revoke("cap-revoke", now.isoformat())
         assert store.verify_integrity() is True, (
-            "revoke() uppdaterade revoked_at utan att räkna om integrity_hash"
+            "revoke() updated revoked_at without recomputing integrity_hash"
         )
 
-    def test_revoke_syns_i_laddad_kapabilitet(self, tmp_path):
+    def test_revoke_is_visible_in_loaded_capability(self, tmp_path):
         now = datetime.now(timezone.utc)
         store = CapabilityStore(str(tmp_path / "caps.db"))
         cap = make_capability(

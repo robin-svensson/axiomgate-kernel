@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Mutationstest av R2: ta bort ankarskydden i minnet och se vad som hander.
+"""Mutation test of R2: remove the anchor safeguards in memory and see what happens.
 
-Samma villkor som de fyra befintliga skydden och som scripts/mutate_r1.py:
-varje kontroll plockas bort i minnet, scenariot kors om, och utfallet skrivs
-ut. Ett skydd som aldrig setts falla ar inte visat.
+Same terms as the four existing safeguards and as scripts/mutate_r1.py: each
+check is stripped out in memory, the scenario is rerun, and the outcome is
+printed. A safeguard never seen to fail has not been demonstrated.
 
-Utfallet ar inte alltid "slapps igenom", och dar det inte ar det ar det ett
-resultat i sig: da finns en andra barriar, och skriptet namnger den. Varje
-fall bar sitt FORVANTADE utfall; avviker verkligheten fran det ar det ett
-fynd, oavsett at vilket hall. docs/TRACEABILITY.md citerar de har raderna.
+The outcome is not always "let through", and where it is not, that is a
+result in itself: then a second barrier exists, and the script names it.
+Every case carries its EXPECTED outcome; if reality deviates from it, that
+is a finding, regardless of direction. docs/TRACEABILITY.md quotes these
+lines.
 
-Kor: python scripts/mutate_r2.py   (exit 0 = alla fall foll ut som deklarerat)
+Run: python scripts/mutate_r2.py   (exit 0 = every case came out as declared)
 """
 import os
 import sys
@@ -35,9 +36,9 @@ def _fresh(n, marker="a", path=None):
 
 
 def substituted_chain():
-    """En annan kedja med samma nyckel, lika lang. Internt helt giltig.
+    """A different chain with the same key, the same length. Internally fully valid.
 
-    Utfall: "PASS" = prefixkontrollen slapper igenom den, "BLOCK" = nekad.
+    Outcome: "PASS" = the prefix check lets it through, "BLOCK" = refused.
     """
     log, path = _fresh(3, marker="a")
     anchor = log.head()
@@ -48,7 +49,7 @@ def substituted_chain():
 
 
 def truncated_tail():
-    """Tva poster bort ur en kedja pa fem, provad mot ankaret."""
+    """Two entries removed from a chain of five, checked against the anchor."""
     log, path = _fresh(5)
     anchor = log.head()
     lines = open(path, encoding="utf-8").read().splitlines(True)
@@ -60,7 +61,7 @@ def truncated_tail():
 
 
 def anchored_startup_on_truncated_log():
-    """Konstruktorn far ett ankare, filen ar kapad. Oppnar den anda?"""
+    """The constructor gets an anchor, the file is truncated. Does it open anyway?"""
     log, path = _fresh(5)
     anchor = log.head()
     lines = open(path, encoding="utf-8").read().splitlines(True)
@@ -74,33 +75,33 @@ def anchored_startup_on_truncated_log():
 
 
 def strike_anchor_matches():
-    """Hash-jamforelsen pa den ankrade positionen struken."""
+    """The hash comparison at the anchored position struck."""
     audit_module.anchor_matches = lambda at_anchor, anchor_head: True
 
 
 def strike_anchor_covers():
-    """Langdkontrollen struken: loggen sags alltid vara lang nog."""
+    """The length check struck: the log is said to always be long enough."""
     audit_module.anchor_covers = lambda count, anchor_count: True
 
 
 def strike_startup_gate():
-    """Konstruktorns grind struken: prefixsvaret sags alltid vara ok."""
+    """The constructor's gate struck: the prefix answer is said to always be ok."""
     audit_module.AuditLog.verify_prefix = (
-        lambda self, *a, **k: (True, "struken", None, 0))
+        lambda self, *a, **k: (True, "struck", None, 0))
 
 
 CASES = [
-    dict(name="en utbytt kedja far inte passera som prefix",
+    dict(name="a substituted chain must not pass as a prefix",
          probe=substituted_chain, mutate=strike_anchor_matches,
          expect="PASS", second_barrier=None),
-    dict(name="en kapad svans far inte passera som prefix",
+    dict(name="a truncated tail must not pass as a prefix",
          probe=truncated_tail, mutate=strike_anchor_covers,
          expect="BLOCK",
-         second_barrier="utan langdkontrollen finns ingen post pa den "
-                        "ankrade positionen, sa hash-jamforelsen mot None "
-                        "nekar anda -- men meddelandet sager da 'replaced' "
-                        "dar 'truncated' vore sant"),
-    dict(name="en ankrad konstruktor far inte oppna en kapad logg",
+         second_barrier="without the length check there is no entry at the "
+                        "anchored position, so the hash comparison against "
+                        "None still refuses -- but the message then says "
+                        "'replaced' where 'truncated' would be true"),
+    dict(name="an anchored constructor must not open a truncated log",
          probe=anchored_startup_on_truncated_log, mutate=strike_startup_gate,
          expect="PASS", second_barrier=None),
 ]
@@ -111,12 +112,12 @@ def main() -> int:
     for case in CASES:
         got = case["probe"]()
         if got != "BLOCK":
-            failures.append(f"BASLINJE {case['name']}: vantade BLOCK, fick {got}")
+            failures.append(f"BASELINE {case['name']}: expected BLOCK, got {got}")
             continue
-        print(f"  baslinje  {case['name']}")
+        print(f"  baseline  {case['name']}")
         print("            -> BLOCK")
 
-        # Mutationen kors i en egen process sa den inte smittar nasta fall.
+        # The mutation runs in its own process so it does not contaminate the next case.
         r, w = os.pipe()
         pid = os.fork()
         if pid == 0:
@@ -130,15 +131,15 @@ def main() -> int:
         os.waitpid(pid, 0)
 
         if got != case["expect"]:
-            failures.append(f"MUTERAD {case['name']}: deklarerat {case['expect']}, "
-                            f"faktiskt {got}")
+            failures.append(f"MUTATED {case['name']}: declared {case['expect']}, "
+                            f"actual {got}")
             continue
         if case["second_barrier"]:
-            print(f"            muterad -> {got}: andra barriar -- "
+            print(f"            mutated -> {got}: second barrier -- "
                   f"{case['second_barrier']}")
         else:
-            print(f"            muterad -> {got}: ingen andra barriar. "
-                  "Kontrollen ar den som bar.")
+            print(f"            mutated -> {got}: no second barrier. "
+                  "The check is what holds.")
 
     print()
     if failures:
@@ -146,8 +147,8 @@ def main() -> int:
             print(f"FAIL  {f}")
         return 1
     without = sum(1 for c in CASES if not c["second_barrier"])
-    print(f"{len(CASES)}/{len(CASES)} mutationer foll ut som deklarerat. "
-          f"{without} av {len(CASES)} har ingen andra barriar.")
+    print(f"{len(CASES)}/{len(CASES)} mutations came out as declared. "
+          f"{without} of {len(CASES)} have no second barrier.")
     return 0
 
 

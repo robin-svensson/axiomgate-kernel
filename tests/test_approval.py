@@ -18,7 +18,7 @@ from axiomgate_kernel.approval import (
     generate_approval_keypair,
 )
 
-# Agaridentiteten ligger inte langre i paketet -- testerna far ange sin egen.
+# The owner identity no longer lives in the package -- tests must set their own.
 TRUSTED_OWNER_ID = "owner-under-test"
 
 from axiomgate_kernel.config import (
@@ -558,33 +558,33 @@ def test_17_multiprocess_key_isolation_and_verification(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# TEST 17: Nonce rullas tillbaka när audit-skrivningen faller
+# TEST 17: Nonce rolls back when the audit write fails
 # ---------------------------------------------------------------------------
-class _FallandeAudit:
-    """AuditLog som faller en gång och lyckas därefter — ett övergående diskfel."""
+class _FailingAudit:
+    """AuditLog that fails once and then succeeds -- a transient disk error."""
 
-    def __init__(self, antal_fel: int = 1):
-        self.kvar = antal_fel
-        self.lyckade = 0
+    def __init__(self, fail_count: int = 1):
+        self.remaining = fail_count
+        self.succeeded = 0
 
     def append_approval_event(self, **kwargs):
-        if self.kvar > 0:
-            self.kvar -= 1
+        if self.remaining > 0:
+            self.remaining -= 1
             raise OSError("disk full")
-        self.lyckade += 1
+        self.succeeded += 1
 
 
-def test_17_nonce_rullas_tillbaka_nar_audit_faller(keypair):
-    """Nonce och escalation-id konsumeras före append_approval_event.
+def test_17_nonce_rolls_back_when_audit_fails(keypair):
+    """Nonce and escalation-id are consumed before append_approval_event.
 
-    Faller audit-skrivningen returnerar except-grenen valid=False med
-    rule='approval.audit_failed' utan att backa konsumtionen. Nonce och
-    escalation-id är då permanent brända: det legitima omförsöket avvisas
-    som replay, och godkännandet kan aldrig genomföras.
+    If the audit write fails, the except branch returns valid=False with
+    rule='approval.audit_failed' without rolling back the consumption.
+    Nonce and escalation-id are then permanently burned: the legitimate
+    retry is rejected as a replay, and the approval can never go through.
     """
     priv, pub = keypair
     signer = ApprovalSigner(priv)
-    audit = _FallandeAudit()
+    audit = _FailingAudit()
     verifier = ApprovalVerifier(
         pub,
         trusted_owner_id=TRUSTED_OWNER_ID,
@@ -593,25 +593,25 @@ def test_17_nonce_rullas_tillbaka_nar_audit_faller(keypair):
     payload = _valid_payload_dict(esc_id="esc-audit-rollback")
     envelope = signer.sign_approval(payload)
 
-    forsta = verifier.consume(
+    first = verifier.consume(
         escalation_id=payload["escalation_id"],
         envelope=envelope,
         expected_tool=payload["tool"],
         expected_args=payload["args"],
         expected_risk=payload["risk"],
     )
-    assert forsta.valid is False
-    assert forsta.rule == "approval.audit_failed"
+    assert first.valid is False
+    assert first.rule == "approval.audit_failed"
 
-    andra = verifier.consume(
+    second = verifier.consume(
         escalation_id=payload["escalation_id"],
         envelope=envelope,
         expected_tool=payload["tool"],
         expected_args=payload["args"],
         expected_risk=payload["risk"],
     )
-    assert andra.valid is True, (
-        f"omförsöket avvisades med {andra.rule!r} — nonce och escalation-id "
-        "brändes trots att godkännandet aldrig gick igenom"
+    assert second.valid is True, (
+        f"the retry was rejected with {second.rule!r} -- nonce and escalation-id "
+        "were burned even though the approval never went through"
     )
-    assert audit.lyckade == 1
+    assert audit.succeeded == 1

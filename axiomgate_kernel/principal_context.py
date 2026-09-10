@@ -289,8 +289,9 @@ def parse_mandate(mandate_str: str) -> Optional[Mandate]:
     - "scope:expires:ISO8601" (e.g., "execute:expires:2026-12-31T23:59:59Z")
     - "scope:expires:ISO8601:parent:ID" (delegation chain)
 
-    Allt annat avvisas. En svans som inte känns igen får aldrig ignoreras tyst:
-    ett mandat som ser tidsbegränsat ut men tappar sin utgång är fail-open.
+    Everything else is rejected. A tail that is not recognized must never be
+    silently ignored: a mandate that looks time-limited but loses its expiry
+    is fail-open.
     """
     if not mandate_str or not isinstance(mandate_str, str):
         return None
@@ -305,9 +306,10 @@ def parse_mandate(mandate_str: str) -> Optional[Mandate]:
     parent_mandate_id = None
 
     if sep:
-        # Delas inte på ":" — ISO 8601-tidstämpeln bär egna kolon, och en
-        # naiv split styckade den till "2026-12-31T23" (23:00 i stället för
-        # 23:59:59) och sköt samtidigt parent-nyckeln ur sitt index.
+        # Do not split on ":" -- the ISO 8601 timestamp carries its own
+        # colons, and a naive split chopped it to "2026-12-31T23" (23:00
+        # instead of 23:59:59) while also shifting the parent key out of
+        # its index.
         if not rest.startswith("expires:"):
             return None
         tail = rest[len("expires:"):]
@@ -323,9 +325,10 @@ def parse_mandate(mandate_str: str) -> Optional[Mandate]:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-    # sha256, inte hash(): den inbyggda hashen randomiseras per process, så
-    # samma mandatsträng fick olika id i två körningar och kunde varken
-    # korsrefereras i audit-loggen eller matchas mot parent_mandate_id.
+    # sha256, not hash(): the built-in hash is randomized per process, so the
+    # same mandate string got a different id across two runs and could
+    # neither be cross-referenced in the audit log nor matched against
+    # parent_mandate_id.
     digest = hashlib.sha256(mandate_str.encode("utf-8")).hexdigest()[:8]
     mandate_id = f"mandate-{scope}-{digest}"
 

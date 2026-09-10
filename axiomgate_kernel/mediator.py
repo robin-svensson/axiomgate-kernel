@@ -56,12 +56,12 @@ class Mediator:
         self._provenance = provenance
         self._policy = policy
         self.available = available
-        # R1. Ar den pa bounder varje verdikt auktoriteten av den bundna
-        # PrincipalContextens mandat, och ett saknat context ar ett nej. Den ar
-        # av som standard: att sla pa den utan att ha satt contexter skulle
-        # neka allt hos varje befintlig integrator. Med flaggan av finns inget
-        # provenanstak alls -- det ar en deklarerad lucka, inte ett smyghal,
-        # och den star utskriven i docs/ROADMAP.md R1.
+        # R1. When this is on, every verdict is bounded by the authority of
+        # the bound PrincipalContext's mandate, and a missing context is a
+        # no. It is off by default: turning it on without having set contexts
+        # would deny everything at every existing integrator. With the flag
+        # off there is no provenance ceiling at all -- that is a declared
+        # gap, not a hidden hole, and it is written out in docs/ROADMAP.md R1.
         self.require_principal_context = require_principal_context
         self._escalations = EscalationStore()
         self._evidence = EvidenceJournal()
@@ -650,16 +650,17 @@ class Mediator:
 
     def _audit_record(self, verdict, reason, rules, canon, bound,
                       escalation_id, owner_decision, frame=None) -> dict:
-        """Beskrivningen av ett beslut som gar in i auditkedjan.
+        """The description of a decision that goes into the audit chain.
 
-        R1 villkor 2: en lasare ska kunna se VILKEN ram som gallde, inte bara
-        utfallet. Ramen kommer fran `frame` -- den CapabilityCheck som faktiskt
-        avgjorde -- och lases INTE om ur contexten har. Skillnaden ar inte
-        kosmetisk: mellan check_capability och den har raden kor
-        `self._provenance.check()`, en injicerad beroende. Las vi contexten pa
-        nytt kan en trasig eller illvillig backend ha bytt ut den under tiden,
-        och loggen skulle da beskriva en annan ram an den som gav beslutet.
-        En sanningskalla per berakning, och den kallan ar checken.
+        R1 condition 2: a reader must be able to see WHICH frame applied, not
+        just the outcome. The frame comes from `frame` -- the CapabilityCheck
+        that actually decided -- and is NOT re-read from the context here.
+        The difference is not cosmetic: between check_capability and this
+        line, `self._provenance.check()` runs, an injected dependency.
+        Re-reading the context could mean a broken or malicious backend
+        swapped it out in the meantime, and the log would then describe a
+        different frame than the one that produced the decision. A single
+        source of truth per computation, and that source is the check.
         """
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -676,8 +677,8 @@ class Mediator:
             "owner_decision": owner_decision,
             "execution_granted": verdict is Verdict.PERMIT,
             "payload_hash": canon.full_payload_hash(),
-            # Ett saknat varde ar inte noll och inte "ingen begransning" -- det
-            # ar frånvaron av en uppgift, och skrivs som None.
+            # A missing value is not zero and not "no restriction" -- it is
+            # the absence of a value, and is written as None.
             "provenance": frame.provenance if frame is not None else None,
             "mandate_id": frame.mandate_id if frame is not None else None,
             "effective_risk_ceiling": (
@@ -710,11 +711,12 @@ class Mediator:
                 verdict, reason, rules, canon, bound, escalation_id, owner_decision,
                 frame)
         except Exception as exc:
-            # Sista natet. Bygget av auditposten lag tidigare utanfor varje try:
-            # ett canon eller ett principal-objekt som inte betedde sig som
-            # kernan antog tog sig hela vagen ut ur evaluate() som ett undantag.
-            # Kan vi inte ens beskriva beslutet finns ingen tillit kvar att ge
-            # bort -- och _gated:s egen fallback gar ocksa genom har.
+            # Last safety net. Building the audit record used to sit outside
+            # every try: a canon or a principal object that did not behave
+            # the way the kernel assumed made it all the way out of
+            # evaluate() as an exception. If we cannot even describe the
+            # decision there is no trust left to grant -- and _gated's own
+            # fallback also goes through here.
             if escalation_id:
                 try:
                     self._grants.unconsume(escalation_id)
@@ -735,12 +737,12 @@ class Mediator:
         try:
             audit_hash = self._audit.append(record)
         except Exception as exc:
-            # AuditLog.append packar sina egna fel i AuditError, men audit ar en
-            # injicerad beroende: vilket objekt som helst med .append() duger.
-            # Ett OSError fran en annan backend gick tidigare rakt igenom -- och
-            # eftersom _gated:s fallback ocksa gar via _finish kom den ut ur
-            # evaluate() som ett undantag i stallet for ett DENY. Fail-closed
-            # kraver att varje utgang har ar ett verdikt.
+            # AuditLog.append wraps its own errors in AuditError, but audit is
+            # an injected dependency: any object with .append() will do. An
+            # OSError from a different backend used to go straight through --
+            # and since _gated's fallback also goes via _finish, it came out
+            # of evaluate() as an exception instead of a DENY. Fail-closed
+            # requires that every exit here be a verdict.
             if escalation_id:
                 try:
                     self._grants.unconsume(escalation_id)
@@ -792,12 +794,12 @@ class Mediator:
 
 
 def _safe_principal_id(principal: Optional[Principal]) -> Optional[str]:
-    """Las principal-id:t utan att kunna kasta.
+    """Read the principal id without being able to throw.
 
-    Authenticator ar ett injicerat beroende precis som audit: konstruktorn tar
-    emot vilket objekt som helst med .authenticate(), sa det som kommer tillbaka
-    behover inte vara en Principal. _finish far inte fallera pa att beskriva den
-    som just nekades -- ett okant id ar None, aldrig ett undantag.
+    Authenticator is an injected dependency just like audit: the constructor
+    accepts any object with .authenticate(), so what comes back does not
+    have to be a Principal. _finish must not fail to describe the one that
+    was just denied -- an unknown id is None, never an exception.
     """
     try:
         pid = principal.principal_id if principal is not None else None

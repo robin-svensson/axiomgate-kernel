@@ -37,10 +37,10 @@ class NonceTracker:
         self._seen_by_principal: Dict[str, collections.OrderedDict] = {}
         self._max_per_principal = max_per_principal
         self._max_ttl = timedelta(seconds=max_ttl_seconds)
-        # Kontroll och skrivning måste ske odelbart: utan lås hann två trådar
-        # passera samma "nonce in seen" och båda fick True. Reproducerat med
-        # 16 trådar och sänkt switchinterval — replay-spärren är den enda
-        # kontrollen mot uppspelning av ett signerat godkännande.
+        # The check and the write must happen atomically: without a lock, two
+        # threads could both pass the same "nonce in seen" check and both got
+        # True. Reproduced with 16 threads and a lowered switch interval -- the
+        # replay guard is the only control against replaying a signed approval.
         self._lock = threading.Lock()
 
     def consume(self, principal_id: str, nonce: str, timestamp_str: str) -> bool:

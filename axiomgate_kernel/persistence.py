@@ -178,7 +178,7 @@ class CapabilityStore(SQLiteStore):
 
     @staticmethod
     def _row_to_persist(row) -> dict:
-        """Radens hashade form. En sanningskälla för både revoke och verify."""
+        """The row's hashed form. A single source of truth for both revoke and verify."""
         return {
             "capability_id": row["capability_id"],
             "principal_id": row["principal_id"],
@@ -197,9 +197,9 @@ class CapabilityStore(SQLiteStore):
     def revoke(self, capability_id: str, revoked_at: str) -> None:
         """Revoke a capability. Thread-safe: entire execute+commit under _lock.
 
-        revoked_at ingår i den hashade persist_data, så integrity_hash måste
-        räknas om i samma transaktion. Gjordes det inte skulle verify_integrity()
-        rapportera manipulation för hela lagret efter en enda återkallelse.
+        revoked_at is part of the hashed persist_data, so integrity_hash must
+        be recomputed in the same transaction. If it were not, verify_integrity()
+        would report tampering for the entire store after a single revocation.
         """
         with self._lock:
             row = self.execute(

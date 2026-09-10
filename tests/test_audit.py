@@ -89,53 +89,54 @@ class TestAuditIntegrity:
         shutil.rmtree(tmpdir)
 
 
-class TestKraschaterhamtning:
-    """_replay() villkorar helning på "truncation:" — en sträng ingen emitter skriver.
+class TestCrashRecovery:
+    """_replay() conditions healing on "truncation:" -- a string no emitter writes.
 
-    verify_integrity() returnerar bara "tail malformation", "malformed json",
-    "previous_hash mismatch", "entry_hash mismatch" och "mac mismatch"
-    (audit.py:171-184). OR-grenen "truncation:" i msg är död kod; helningen
-    bärs helt av "tail malformation". Testet låser fast att en avbruten
-    skrivning faktiskt helas, så att grenen kan tas bort utan att beteendet
-    tyst ändras.
+    verify_integrity() only ever returns "tail malformation", "malformed json",
+    "previous_hash mismatch", "entry_hash mismatch" and "mac mismatch"
+    (audit.py:171-184). The "truncation:" OR-branch in msg is dead code;
+    healing is carried entirely by "tail malformation". This test locks in
+    that an interrupted write is actually healed, so the branch can be
+    removed without silently changing behavior.
     """
 
-    def test_avbruten_sista_rad_helas_vid_oppning(self, tmp_path):
-        sokvag = str(tmp_path / "audit.log")
-        nyckel = generate_key()
-        logg = AuditLog(sokvag, nyckel)
-        logg.append({"event": "ett"})
-        logg.append({"event": "tva"})
+    def test_a_truncated_last_line_is_healed_on_open(self, tmp_path):
+        path = str(tmp_path / "audit.log")
+        key = generate_key()
+        log = AuditLog(path, key)
+        log.append({"event": "one"})
+        log.append({"event": "two"})
 
-        # Simulera en krasch mitt i en skrivning: en ofullständig JSON-rad sist.
-        with open(sokvag, "a", encoding="utf-8") as fh:
-            fh.write('{"event": "avbru')
+        # Simulate a crash mid-write: an incomplete JSON line at the end.
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write('{"event": "trunc')
 
-        helad = AuditLog(sokvag, nyckel)
-        ok, msg, _, antal = helad.verify_integrity()
-        assert ok is True, f"loggen helades inte: {msg}"
-        assert antal == 2
+        healed = AuditLog(path, key)
+        ok, msg, _, count = healed.verify_integrity()
+        assert ok is True, f"the log was not healed: {msg}"
+        assert count == 2
 
-    def test_verkligt_manipulerad_logg_avvisas_fortfarande(self, tmp_path):
-        sokvag = str(tmp_path / "audit.log")
-        nyckel = generate_key()
-        logg = AuditLog(sokvag, nyckel)
-        logg.append({"event": "ett"})
+    def test_a_genuinely_tampered_log_is_still_rejected(self, tmp_path):
+        path = str(tmp_path / "audit.log")
+        key = generate_key()
+        log = AuditLog(path, key)
+        log.append({"event": "one"})
 
-        rader = open(sokvag, encoding="utf-8").read().replace('"ett"', '"manipulerad"')
-        open(sokvag, "w", encoding="utf-8").write(rader)
+        content = open(path, encoding="utf-8").read().replace('"one"', '"tampered"')
+        open(path, "w", encoding="utf-8").write(content)
 
         with pytest.raises(AuditError):
-            AuditLog(sokvag, nyckel)
+            AuditLog(path, key)
 
 
-# --- Trunkering av svansen (fynd 2026-09-10) -------------------------------
-# Buggen: verify_chain() verifierade bara att kvarvarande poster länkade rätt
-# bakåt. Att ta bort den SISTA posten lämnar en perfekt giltig kortare kedja,
-# så en angripare med skrivrätt kunde radera just den PERMIT som bevisar vad
-# agenten gjorde -- och loggen intygade fortfarande sin egen integritet.
-# En självcertifierande logg kan inte ensam bevisa att den inte är kapad;
-# det kräver en förankring utanför filen.
+# --- Truncating the tail (finding 2026-09-10) -------------------------------
+# The bug: verify_chain() only verified that the remaining entries linked
+# correctly backward. Removing the LAST entry leaves a perfectly valid
+# shorter chain, so an attacker with write access could delete exactly the
+# PERMIT that proves what the agent did -- and the log still attested to
+# its own integrity.
+# A self-certifying log cannot alone prove it has not been hijacked;
+# that requires an anchor outside the file.
 
 import os
 import tempfile

@@ -1,9 +1,9 @@
-"""Fail-closed: ingen vag ut ur mediatorn ar ett undantag.
+"""Fail-closed: no way out of the mediator is an exception.
 
-Buggen: _finish fangade bara AuditError. Audit ar ett injicerat beroende --
-Mediator tar emot vilket objekt som helst med .append() -- sa en backend som
-kastar OSError tog sig hela vagen ut ur evaluate(). Aven _gated:s egen
-fallback gar via _finish, sa det fanns inget andra natet.
+The bug: _finish only caught AuditError. Audit is an injected dependency --
+Mediator accepts any object at all with .append() -- so a backend that
+raises OSError made it all the way out of evaluate(). Even _gated's own
+fallback goes through _finish, so there was no second net.
 """
 
 import sys
@@ -19,7 +19,7 @@ from axiomgate_kernel import ActionType, RiskLevel, Verdict  # noqa: E402
 
 
 class ExplodingAudit:
-    """Duck-typad auditbackend som misslyckas med nagot annat an AuditError."""
+    """Duck-typed audit backend that fails with something other than AuditError."""
 
     def append(self, record):
         raise OSError("disk full")
@@ -29,12 +29,12 @@ class ExplodingAudit:
 
 
 @pytest.mark.parametrize("action,risk", [
-    (ActionType.EXECUTE.value, RiskLevel.LOW.value),    # skulle blivit PERMIT
+    (ActionType.EXECUTE.value, RiskLevel.LOW.value),    # would have become PERMIT
     (ActionType.COMMIT.value, RiskLevel.LOW.value),     # owner-mandatory
-    (ActionType.EXECUTE.value, RiskLevel.HIGH.value),   # over risktaket
+    (ActionType.EXECUTE.value, RiskLevel.HIGH.value),   # over the risk ceiling
 ])
 def test_non_audit_backend_failure_is_still_a_verdict(action, risk):
-    """Ett OSError fran auditbackenden ska bli ett verdikt, inte ett undantag."""
+    """An OSError from the audit backend should become a verdict, not an exception."""
     mediator, agent_key, _owner, _audit, _tmp = build()
     mediator._audit = ExplodingAudit()
 
@@ -45,14 +45,15 @@ def test_non_audit_backend_failure_is_still_a_verdict(action, risk):
 
     assert decision.verdict in (Verdict.DENY, Verdict.ESCALATE)
     assert decision.grant is None
-    # Utan detta vore testet tomt: det skulle passera aven om ingangen aldrig
-    # kom fram till auditskrivningen och darmed aldrig provade natet.
+    # Without this the test would be empty: it would pass even if the input
+    # never reached the audit write and therefore never exercised the net.
     assert "audit.write_failed" in decision.applied_rules
     assert "audit.write_failed" in decision.applied_rules
 
 
 def test_would_be_permit_is_downgraded_to_deny():
-    """Det som skulle blivit PERMIT nedgraderas -- en oskriven logg ar inget lov."""
+    """What would have become PERMIT is downgraded -- an unwritten log is no
+    permission."""
     mediator, agent_key, _owner, _audit, _tmp = build()
     mediator._audit = ExplodingAudit()
     decision = mediator.evaluate(request(
@@ -63,7 +64,7 @@ def test_would_be_permit_is_downgraded_to_deny():
 
 
 def test_failure_never_yields_a_permission():
-    """Det starkare pastaendet: inget fel far ge PERMIT."""
+    """The stronger claim: no failure may yield PERMIT."""
     mediator, agent_key, _owner, _audit, _tmp = build()
     mediator._audit = ExplodingAudit()
     decision = mediator.evaluate(request(
@@ -74,15 +75,16 @@ def test_failure_never_yields_a_permission():
 
 
 class _OddPrincipal:
-    """Duck-typad principal som saknar .principal_id."""
+    """Duck-typed principal lacking .principal_id."""
 
 
 class BrokenAuthenticator:
-    """Injicerad authenticator som lamnar ett principal-objekt kernan inte forstar.
+    """Injected authenticator that returns a principal object the kernel does
+    not understand.
 
-    Authenticator ar precis som audit ett injicerat beroende: konstruktorn tar
-    emot vilket objekt som helst med .authenticate(). Det som kommer tillbaka
-    behover alltsa inte vara en Principal.
+    Authenticator is, just like audit, an injected dependency: the
+    constructor accepts any object at all with .authenticate(). What comes
+    back therefore does not have to be a Principal.
     """
 
     def __init__(self, inner):
@@ -97,7 +99,7 @@ class BrokenAuthenticator:
 
 
 class UnhashablePayload:
-    """Canon vars payload-hash fallerar -- samma klass av fel, annan rad."""
+    """Canon whose payload hash fails -- same class of error, different line."""
 
     def __init__(self, inner):
         self._inner = inner
@@ -113,11 +115,13 @@ class UnhashablePayload:
 
 
 def test_unusable_principal_is_a_verdict_not_an_exception():
-    """Buggen: _finish byggde auditposten FORE sitt try -- undantaget slapp ut.
+    """The bug: _finish built the audit entry BEFORE its try -- the exception
+    escaped.
 
-    _finish ar sista natet: bade _gated:s fallback och varje normal utgang gar
-    genom den. Laste den `principal.principal_id` pa ett objekt utan det
-    attributet kom AttributeError ut ur evaluate() i stallet for ett verdikt.
+    _finish is the last net: both _gated's fallback and every normal exit
+    go through it. If it read `principal.principal_id` on an object without
+    that attribute, AttributeError came out of evaluate() instead of a
+    verdict.
     """
     mediator, agent_key, _owner, _audit, _tmp = build()
     mediator._authn = BrokenAuthenticator(mediator._authn)
@@ -126,16 +130,17 @@ def test_unusable_principal_is_a_verdict_not_an_exception():
         agent_key, action_type=ActionType.EXECUTE.value,
         domain="code", risk_level=RiskLevel.LOW.value))
 
-    # Vilken gren som fangar spelar ingen roll -- kravet ar att evaluate()
-    # lamnar ett verdikt och ingen behorighet. Har fangas felet redan i
-    # _gated:s fallback, och _finish klarar da av att beskriva det som None.
+    # Which branch catches it does not matter -- the requirement is that
+    # evaluate() returns a verdict and no authorization. Here the error is
+    # already caught in _gated's fallback, and _finish then manages to
+    # describe it as None.
     assert decision.verdict is Verdict.DENY
     assert decision.grant is None
     assert decision.bound_principal is None
 
 
 def test_payload_hash_failure_is_a_verdict_not_an_exception():
-    """Samma nat, annan rad i samma dict: full_payload_hash() kastar."""
+    """Same net, different line in the same dict: full_payload_hash() raises."""
     mediator, agent_key, _owner, _audit, _tmp = build()
 
     import axiomgate_kernel.mediator as mediator_module
@@ -158,11 +163,12 @@ def test_payload_hash_failure_is_a_verdict_not_an_exception():
     "verify_evidence", "authorize_evidence", "update_policy",
 ])
 def test_every_entry_point_returns_a_verdict(method):
-    """Granskningsfynd 2026-09-10: bara evaluate() var tackt.
+    """Audit finding 2026-09-10: only evaluate() was covered.
 
-    Alla sju ingangar gar genom _gated och _finish, men det var ett pastaende
-    om koden -- inte nagot som foll om det slutade galla. Med en auditbackend
-    som kastar ska var och en av dem lamna ett verdikt, aldrig ett undantag.
+    All seven entry points go through _gated and _finish, but that was a
+    claim about the code -- not something that would fail if it stopped
+    being true. With an audit backend that raises, each of them should
+    return a verdict, never an exception.
     """
     mediator, agent_key, _owner, _audit, _tmp = build()
     mediator._audit = ExplodingAudit()
@@ -173,6 +179,6 @@ def test_every_entry_point_returns_a_verdict(method):
 
     assert decision.verdict in (Verdict.DENY, Verdict.ESCALATE)
     assert decision.grant is None
-    # Utan detta vore testet tomt: det skulle passera aven om ingangen aldrig
-    # kom fram till auditskrivningen och darmed aldrig provade natet.
+    # Without this the test would be empty: it would pass even if the input
+    # never reached the audit write and therefore never exercised the net.
     assert "audit.write_failed" in decision.applied_rules

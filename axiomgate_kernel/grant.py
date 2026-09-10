@@ -185,14 +185,15 @@ class ReservedGrantStore:
                 checks["provenance"] = (grant.provenance_identity, provenance_identity)
 
             if grant.reason_class in (ReasonClass.POLICY, ReasonClass.PROVENANCE):
-                # En policy- eller provenansandring ar ofta samma handelse som
-                # en omutfardad kapabilitet: agaren ratar upp laget och ger ut
-                # nya id:n. Att binda grantet mot det gamla kapabilitets-id:t
-                # skulle da ogiltigforklara precis det agaren just godkande.
-                # Det gor inte om behorighetsprovningen: mediator.reenter kor
-                # check_capability mot registret pa nytt och kraver ALLOW innan
-                # den ens anropar hit. Det som slapps ar bindningen till en
-                # specifik kapabilitet, inte kravet pa att ha en giltig.
+                # A policy or provenance change is often the same event as a
+                # re-issued capability: the owner straightens out the
+                # situation and hands out new ids. Binding the grant to the
+                # old capability id would then invalidate exactly what the
+                # owner just approved. This does not redo the authorization
+                # check: mediator.reenter runs check_capability against the
+                # registry again and requires ALLOW before it even calls in
+                # here. What is released is the binding to a specific
+                # capability, not the requirement to have a valid one.
                 checks.pop("capability_id", None)
                 checks.pop("capability_scope", None)
 

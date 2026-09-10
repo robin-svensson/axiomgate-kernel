@@ -30,9 +30,9 @@ class EvidenceRecord:
     verifier_id: Optional[str] = None
     authorization_result: Optional[bool] = None
     authorizer_id: Optional[str] = None
-    # Innehållsdigesten som posten binder. Sätts en gång via bind_digest och
-    # bärs sedan oförändrad genom verify/authorize, så att det som skrivs ut
-    # som "evidence_digest" faktiskt är knutet till evidenskedjan.
+    # The content digest the record binds. Set once via bind_digest and then
+    # carried unchanged through verify/authorize, so that what gets written
+    # out as "evidence_digest" is actually tied to the evidence chain.
     digest: Optional[str] = None
 
 
