@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The workflows pin actions to a commit SHA rather than a moving tag, which
+  # is what stops a retagged release from changing what CI runs. A pin nobody
+  # updates goes stale instead, so Dependabot moves the SHAs and names the
+  # version it moved them to. Without this, pinning trades one risk for another.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
