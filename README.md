@@ -276,6 +276,16 @@ reason each was chosen is in [docs/ROADMAP.md](docs/ROADMAP.md). A deployment th
 wires neither gets the kernel as it was before those items were closed — which is
 still the four protections above, but not the two the roadmap describes.
 
+## The linter, for what happens before runtime
+
+The kernel enforces attenuation at the moment a call is made. It cannot tell you
+that your codebase is full of delegation that will hit it. That is a static
+question, and it has its own tool:
+[**axiomgate-lint**](https://github.com/robin-svensson/axiomgate-lint) — a
+dependency-free AST linter that finds unattenuated agent delegation in source,
+with a GitHub Action. It is MIT, it is genuinely separate, and it is useful
+without this kernel.
+
 ## Licence and contact
 
 **Source-available, not open source.** AxiomGate Kernel is licensed under the
