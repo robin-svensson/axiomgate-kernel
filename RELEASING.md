@@ -23,10 +23,16 @@ no secret in this repository and nothing to rotate.
 
 ### One-time setup (manual, PyPI account owner only)
 
+**This was done 2026-09-11** — the pending publisher is registered and shows the
+values below on PyPI's Publishing page. It is recorded here because it has to be
+redone from scratch if it is ever removed, and because a pending publisher does
+**not** reserve the name: until the first upload creates the project, anyone else
+can still register `axiomgate-kernel` on PyPI.
+
 1. Sign in at <https://pypi.org> and go to
    **Your projects → Publishing → Add a new pending publisher**.
-   `axiomgate-kernel` is not registered on PyPI, so it has to be added as a
-   *pending* publisher; the project is created by the first successful run.
+   `axiomgate-kernel` does not exist on PyPI yet, so it is added as a *pending*
+   publisher; the project is created by the first successful run.
 2. Fill in (PyPI's own labels may read slightly differently; these are the
    values, in the order the form asks for them):
    - PyPI Project Name: `axiomgate-kernel`
