@@ -30,6 +30,7 @@ from .audit import AuditLog, AuditError
 from .mediator import Mediator
 from .client import MediatorClient
 from .provisioning import ProvisioningToken, ProvisioningError
+from .strict import NEW_LOG, StrictnessError, strict_audit_log, strict_mediator, strictness_report
 from .serializers import (
     capability_to_persist, capability_from_persist,
     evidence_to_persist, evidence_from_persist,
@@ -72,4 +73,8 @@ __all__ = [
     "AuditLog", "AuditError",
     # Mediator
     "Mediator", "MediatorClient",
+    # Strict wiring -- both opt-in protections at once, and a report of
+    # which ones a live kernel actually has. See docs/ROADMAP.md.
+    "NEW_LOG", "StrictnessError", "strict_audit_log", "strict_mediator",
+    "strictness_report",
 ]

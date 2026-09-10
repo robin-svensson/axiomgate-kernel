@@ -51,7 +51,7 @@ anchor() {
 
 echo "== 1. Test suite =="
 T="$("$PY" -m pytest tests -q 2>&1 | tail -1)"
-check_eq "whole suite green" "299 passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
+check_eq "whole suite green" "314 passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
 
 echo "== 2. Standalone: no dependency on the old src package =="
 LEAK="$(grep -rn 'src\.kernel\|from src\b\|"src\.' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -64,7 +64,7 @@ class B:
 sys.meta_path.insert(0,B())
 import pytest; sys.exit(pytest.main(['tests','-q','--tb=no']))
 " 2>&1 | tail -1 | grep -oE '^[0-9]+ passed')"
-check_eq "green even with src blocked" "299 passed" "$ISO"
+check_eq "green even with src blocked" "314 passed" "$ISO"
 
 echo "== 3. No false formal traceability =="
 INV="$(grep -rn 'I-[0-9]' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -85,10 +85,10 @@ anchor "I8  policy_hash in grant"     axiomgate_kernel/grant.py           45 'po
 anchor "I9  authenticate"            axiomgate_kernel/authentication.py 179 'def authenticate'
 anchor "I9  constant-time comparison"  axiomgate_kernel/authentication.py 200 'hmac_equal'
 anchor "I10 consume_if_valid"        axiomgate_kernel/grant.py          137 'def consume_if_valid'
-anchor "audit append"                axiomgate_kernel/audit.py          133 'def append'
-anchor "audit verify_chain"          axiomgate_kernel/audit.py          217 'def verify_chain'
-anchor "audit verify_prefix"         axiomgate_kernel/audit.py          231 'def verify_prefix'
-anchor "audit _verify_links"         axiomgate_kernel/audit.py          355 'def _verify_links'
+anchor "audit append"                axiomgate_kernel/audit.py          139 'def append'
+anchor "audit verify_chain"          axiomgate_kernel/audit.py          223 'def verify_chain'
+anchor "audit verify_prefix"         axiomgate_kernel/audit.py          237 'def verify_prefix'
+anchor "audit _verify_links"         axiomgate_kernel/audit.py          361 'def _verify_links'
 anchor "COMMIT is Owner-only"        axiomgate_kernel/domain.py          15 'OWNER_MANDATORY_ACTIONS = frozenset'
 anchor "COMMIT gate (single point)" axiomgate_kernel/authorization.py 158 'OWNER_MANDATORY_ACTIONS'
 anchor "Verdict"                     axiomgate_kernel/domain.py          79 'class Verdict'
@@ -404,9 +404,101 @@ check_eq "distinct states"  "345322" "$(grep -oE '[0-9]+ distinct states found' 
 check_eq "no errors found"    "1"      "$(grep -c 'No error has been found' formal/tlc-run-2026-09-08.log)"
 check_eq "model size bound to 1 authority" "1" "$(grep -c 'Authority = {auth1}' formal/GovernanceMCV6.cfg)"
 
+echo "== 6b. Strict wiring: the two opt-in protections cannot be half-set =="
+# These run the real constructors rather than reading strict.py, because the
+# claim is about behavior: a strict kernel that can be talked into the weak
+# configuration is worth nothing, and only a run can tell.
+STRICT="$(python3 - <<'PY'
+import os, tempfile
+from axiomgate_kernel import (
+    AuditLog, Authenticator, CapabilityRegistry, FixedProvenanceChecker,
+    Mediator, NEW_LOG, PrincipalKeyStore, ProvisioningToken, StrictnessError,
+    generate_key, strict_audit_log, strict_mediator, strictness_report,
+)
+from axiomgate_kernel.provenance import ProvenanceKind, ProvenanceResult
+
+def path(n):
+    return os.path.join(tempfile.mkdtemp(prefix="axiomgate-claims-"), n)
+
+def wiring():
+    # One provisioning token per store: a token is consumed on seal, and
+    # reusing it across the two raises ProvisioningError. That is I3 working.
+    ktok, rtok = ProvisioningToken(), ProvisioningToken()
+    keys = PrincipalKeyStore(); keys.register("owner", generate_key(), ktok); keys.seal(ktok)
+    reg = CapabilityRegistry(); reg.seal(rtok)
+    return Authenticator(keys), reg, FixedProvenanceChecker(ProvenanceResult(ProvenanceKind.MATCH, "ok"))
+
+out = []
+
+# A plain log reports itself unanchored; a strict one reports itself anchored.
+out.append("plain_anchored=%s" % AuditLog(path("a.log"), generate_key()).anchored)
+out.append("strict_anchored=%s" % strict_audit_log(path("b.log"), generate_key(), NEW_LOG).anchored)
+
+# NEW_LOG over an existing chain is refused.
+p = path("c.log"); lg = AuditLog(p, generate_key()); lg.append({"x": 1})
+try:
+    strict_audit_log(p, generate_key(), NEW_LOG); out.append("newlog_over_chain=allowed")
+except StrictnessError:
+    out.append("newlog_over_chain=refused")
+
+authn, reg, prov = wiring()
+
+# A strict mediator on an unanchored log is refused.
+try:
+    strict_mediator(authenticator=authn, registry=reg,
+                    audit=AuditLog(path("d.log"), generate_key()), provenance=prov)
+    out.append("strict_on_plain_log=allowed")
+except StrictnessError:
+    out.append("strict_on_plain_log=refused")
+
+# The ceiling cannot be declined through the strict door.
+try:
+    strict_mediator(authenticator=authn, registry=reg,
+                    audit=strict_audit_log(path("e.log"), generate_key(), NEW_LOG),
+                    provenance=prov, require_principal_context=False)
+    out.append("ceiling_declinable=yes")
+except StrictnessError:
+    out.append("ceiling_declinable=no")
+
+# The report: default kernel, half-wired kernel, strict kernel.
+plain_m = Mediator(authn, reg, AuditLog(path("f.log"), generate_key()), prov)
+out.append("default_strict=%s" % strictness_report(plain_m)["strict"])
+out.append("default_gaps=%d" % len(strictness_report(plain_m)["gaps"]))
+
+half = Mediator(authn, reg, AuditLog(path("g.log"), generate_key()), prov,
+                require_principal_context=True)
+r = strictness_report(half)
+out.append("half_strict=%s" % r["strict"])
+out.append("half_gaps=%d" % len(r["gaps"]))
+
+full = strict_mediator(authenticator=authn, registry=reg,
+                       audit=strict_audit_log(path("h.log"), generate_key(), NEW_LOG),
+                       provenance=prov)
+r = strictness_report(full)
+out.append("full_strict=%s" % r["strict"])
+out.append("full_gaps=%d" % len(r["gaps"]))
+out.append("full_ceiling=%s" % full.require_principal_context)
+
+print(" ".join(out))
+PY
+)"
+get() { echo "$STRICT" | tr ' ' '\n' | grep "^$1=" | cut -d= -f2; }
+check_eq "a plain audit log reports itself unanchored" "False" "$(get plain_anchored)"
+check_eq "a strict audit log reports itself anchored"  "True"  "$(get strict_anchored)"
+check_eq "NEW_LOG over an existing chain is refused"   "refused" "$(get newlog_over_chain)"
+check_eq "strict_mediator refuses an unanchored log"   "refused" "$(get strict_on_plain_log)"
+check_eq "the ceiling cannot be declined through the strict door" "no" "$(get ceiling_declinable)"
+check_eq "the default kernel reports itself not strict" "False" "$(get default_strict)"
+check_eq "the default kernel names both gaps"           "2"     "$(get default_gaps)"
+check_eq "a half-wired kernel is still not strict"      "False" "$(get half_strict)"
+check_eq "a half-wired kernel names exactly one gap"    "1"     "$(get half_gaps)"
+check_eq "a strict kernel reports itself strict"        "True"  "$(get full_strict)"
+check_eq "a strict kernel names no gaps"                "0"     "$(get full_gaps)"
+check_eq "a strict kernel has the ceiling on"           "True"  "$(get full_ceiling)"
+
 echo "== 7. Code volume (README figures) =="
-check_eq "core files (.py)" "25" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "19" "$(find tests  -name '*.py' | wc -l)"
+check_eq "core files (.py)" "26" "$(find axiomgate_kernel -name '*.py' | wc -l)"
+check_eq "test files"       "20" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that
@@ -515,6 +607,12 @@ check_eq "no trace of the old project name" "0" \
   "$(git ls-files -z | xargs -0 grep -niIE 'aeg[i]s' 2>/dev/null | wc -l)"
 check_eq "no channel-bound owner identity" "0" \
   "$(git ls-files -z | xargs -0 grep -niIE 'disc[o]rd' 2>/dev/null | wc -l)"
+# The owner's nickname and the company name are internal; externally this is
+# AxiomGate by Robin Svensson. Checked here because it was *not* checked here:
+# the nickname reached docs/ROADMAP.md in cd2de2d and an L6 review caught it by
+# eye. Anything a reviewer finds twice by reading belongs in this file.
+check_eq "no internal nickname or company name" "0" \
+  "$(git ls-files -z | xargs -0 grep -niIE 'bob[a]n|north[l]ine' 2>/dev/null | wc -l)"
 check_eq "the clone URL points to robin-svensson" "1" \
   "$(grep -c 'github.com/robin-svensson/axiomgate-kernel.git' README.md)"
 # README promises that a single import line gives three names. The names are

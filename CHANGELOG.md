@@ -19,6 +19,25 @@ each such change is listed here.
 - `SECURITY.md` — a private channel for reporting a fail-open decision,
   an authentication bypass, capability escalation or audit tampering.
 - `.github/dependabot.yml` — weekly updates for the pinned GitHub Actions.
+- `axiomgate_kernel/strict.py` — `strict_audit_log`, `strict_mediator`,
+  `strictness_report` and the `NEW_LOG` sentinel. The two fail-closed protections
+  (R1's provenance ceiling, R2's audit anchor) are opt-in on two different objects,
+  and nothing reported the combination: a kernel with one of them wired was
+  indistinguishable from a kernel with both — same records, same verdicts, same
+  green suite. `strict_audit_log` has no default for its anchor argument;
+  `strict_mediator` refuses to build on an unanchored log or to have the ceiling
+  declined; `strictness_report` asks a live kernel which protections it has and
+  names each missing one with the flag that turns it on. See
+  [docs/ROADMAP.md](docs/ROADMAP.md) R3.
+- `AuditLog.anchored` — whether the log was opened against an anchor. Nothing in
+  the kernel could answer that before, so neither the strict constructor nor the
+  report could check its own precondition.
+- `tests/test_strict.py` (13 tests) and §6b of `scripts/verify_claims.sh`
+  (12 checks that run the real constructors, because a strict kernel that can be
+  talked into the weak configuration is worth nothing and only a run can tell).
+- A check that no internal nickname or company name appears in any tracked file.
+  One reached `docs/ROADMAP.md` and was found by eye in review; this repo is
+  public, and a check a reviewer performs twice by reading belongs in a script.
 
 ### Changed
 - Every GitHub Action is pinned to a commit SHA rather than a moving major tag.
@@ -27,6 +46,27 @@ each such change is listed here.
   and a skip reads as green — so `tests/test_no_embedded_identity.py`, pointed at
   a tree without the source directory, examined nothing at all and still passed.
   Anything with nothing left to check now fails at collection instead.
+- The suite is 314 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
+  line anchors in `scripts/verify_claims.sh` were corrected to match — the claim
+  verifier caught all four drifted `audit.py` line numbers and both file counts,
+  which is what it is for.
+
+### Limits, stated rather than defended
+- `strictness_report` is **self-reporting, not verification**. `AuditLog.anchored`
+  is an ordinary writable attribute, so a caller who sets it by hand — or passes
+  any object carrying it — gets a clean report. What R3 closes is that an *honest*
+  integrator could not tell which kernel they were running. Code lying to its own
+  audit trail is not addressable in-process; it can call `Mediator` directly.
+- A log truncated to **zero bytes** is indistinguishable from a first run, so the
+  `NEW_LOG` path accepts it. Deliberate: a created-but-unwritten file is what a
+  crashed first run leaves behind. Detecting a total wipe needs the external
+  anchor — a reopen passing `head()` catches it. Both limits are characterisation
+  tests, so a change that claims to close either has to delete an assertion.
+
+### Unchanged, deliberately
+- **No default moved.** A deployment that does not import `strict` gets exactly the
+  kernel it got before. Whether fail-closed should become the default at 1.0 is a
+  product decision and is recorded as open in [docs/ROADMAP.md](docs/ROADMAP.md) R3.
 
 ## [0.9.0] — 2026-09-10 (not tagged)
 

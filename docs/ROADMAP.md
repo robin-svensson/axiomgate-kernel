@@ -159,3 +159,74 @@ had, and it means the protection only exists where the integrator wired it.
    and no check notices if it never happens. This is stated as a declared gap in
    [docs/ANCHORING.md](ANCHORING.md) rather than tracked as an open item, because no
    amount of library code can close it.
+
+---
+
+## R3 — The two deviations were invisible from inside a running kernel
+
+**Status: CLOSED 2026-09-11** — the defaults are unchanged, and that is the point.
+
+R1 and R2 each end with a deviation: the protection exists, and it is off unless the
+integrator turns it on. Both reasons still hold. What did not hold is what those two
+paragraphs left implied — that a deployment could tell which kernel it was running.
+
+It could not. The two flags are set on **two different objects** at two different call
+sites (`Mediator(require_principal_context=…)` and `AuditLog(…, anchor=…)`), and nothing
+anywhere reported the combination. A deployment with the provenance ceiling on and a
+plain `AuditLog` is byte-for-byte indistinguishable, from inside, from one with both:
+same audit records, same verdicts, same green suite. Half a fail-closed kernel reads
+exactly like a whole one.
+
+That is worse than the gap itself. A documented gap can be checked against; an
+*unobservable* gap gets reported as closed by the person running it, in good faith.
+
+**What was built** (`axiomgate_kernel/strict.py`, 13 tests in `tests/test_strict.py`,
+12 mechanical checks in `scripts/verify_claims.sh` §6b):
+
+1. **`strict_audit_log(path, key, anchor)`** — `anchor` is positional with no default.
+   That is the whole mechanism: `AuditLog(path, key)` is a *valid call* that silently
+   accepts a truncated file, and no amount of documentation makes a valid call look
+   wrong at the call site. Pass a prior `head()`, or `NEW_LOG` when no chain exists yet.
+   `NEW_LOG` is a claim, not an escape hatch — it is refused if a chain is on disk,
+   because "first run" and "reopening" are the same call to `AuditLog` and different
+   security situations.
+2. **`strict_mediator(...)`** — turns the ceiling on, and **refuses to build** on an
+   audit log that was not opened with an anchor. Passing `require_principal_context=False`
+   raises rather than being ignored: a strict constructor that hands back a weak kernel
+   under a name saying otherwise is worse than no constructor, because the name is what
+   the integrator quotes in their own documentation.
+3. **`strictness_report(mediator)`** — asks a live kernel which protections it has, and
+   *names* the missing ones with the flag that turns each on. A bare `False` tells an
+   operator nothing about what to wire. Reads state, never changes it; safe to print at
+   startup.
+4. **`AuditLog.anchored`** — the one behavioral change outside the new module. Nothing
+   in the kernel could previously answer "is this log anchored?", so neither the strict
+   constructor nor the report could check its own precondition.
+
+**No default changed.** A deployment that never imports `strict` gets exactly the kernel
+it got before, and R1's and R2's defaults stay where those entries say they are. This is
+a second, narrower door — not a change to the first one.
+
+**What stays open, and is the project owner's call, not the library's:** whether fail-closed should
+become the *default* at 1.0. The argument against it in R1 and R2 was that it would break
+existing integrators. That argument is currently vacuous — the kernel has never run
+outside a development environment and is not on PyPI, so there are no integrators to
+break. The window where flipping the default costs nothing is open now and closes with
+the first real adopter. Deciding it is a product decision, and it is not made here.
+
+**What this does not do.** `strictness_report` is *self-reporting*, not verification. It
+reads `AuditLog.anchored`, which is an ordinary writable attribute: a caller who sets
+`log.anchored = True` by hand, or passes any object with that attribute, gets a clean
+report. So does `strict_mediator` — it checks the attribute, not the provenance of the
+object. That is the right boundary for what this is: R3 closes the gap where an *honest*
+integrator cannot tell which kernel they are running. It is not a defence against code
+that is deliberately lying to its own audit trail, and no in-process check could be —
+such code can also call `Mediator` directly.
+
+One case the `NEW_LOG` path cannot catch: a log file truncated to **zero bytes**.
+`_has_entries` reads size, so a complete wipe is indistinguishable from a first run and
+is accepted. That is deliberate — a created-but-unwritten file is what a crashed first
+run leaves behind, and refusing it would fail the strict path on a situation with nothing
+to protect. Detecting a total wipe requires the external anchor, which is exactly what
+R2 is for: a reopen that passes `head()` catches it, and one that claims `NEW_LOG` does
+not.

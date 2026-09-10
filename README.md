@@ -52,7 +52,9 @@ risk ceiling (`scripts/mutate_r1.py`) and the externally anchored audit chain
 (`scripts/mutate_r2.py`). Both are **opt-in** — `require_principal_context=True` and
 `AuditLog(..., anchor=...)` respectively — and two of three checks in each have no
 second barrier. What that means, and why the default is the weaker one, is written out
-in [docs/ROADMAP.md](docs/ROADMAP.md) R1 and R2.
+in [docs/ROADMAP.md](docs/ROADMAP.md) R1 and R2. Since 2026-09-11 a kernel can be asked
+which of the two it actually has, and built through a door that cannot produce half of
+them — `strictness_report` and `strict_mediator`, R3.
 
 ---
 
@@ -62,7 +64,7 @@ in [docs/ROADMAP.md](docs/ROADMAP.md) R1 and R2.
 git clone https://github.com/robin-svensson/axiomgate-kernel.git
 cd axiomgate-kernel
 pip install -e ".[dev]"
-pytest -q                       # 299 tests
+pytest -q                       # 314 tests
 python examples/01_permit.py    # a request that is allowed
 python examples/02_deny.py      # three that are refused, three different ways
 python examples/03_audit_trail.py   # tampering with the log, and being caught
@@ -265,7 +267,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.9.0. The code is mature — 299 tests, mutation-tested protections — but
+Version 0.9.0. The code is mature — 314 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires
@@ -275,6 +277,38 @@ somewhere the writing process cannot reach. Neither default is fail-closed, and 
 reason each was chosen is in [docs/ROADMAP.md](docs/ROADMAP.md). A deployment that
 wires neither gets the kernel as it was before those items were closed — which is
 still the four protections above, but not the two the roadmap describes.
+
+**So ask the kernel which one you are running.** The two flags sit on two different
+objects, and a half-wired kernel is indistinguishable from a whole one from the
+inside — same records, same verdicts, same green suite. Either take the door that
+cannot produce the half-wired case:
+
+```python
+from axiomgate_kernel import NEW_LOG, strict_audit_log, strict_mediator, strictness_report
+
+audit = strict_audit_log(path, key, NEW_LOG)      # or a prior head() you kept outside
+mediator = strict_mediator(authenticator=…, registry=…, audit=audit, provenance=…)
+```
+
+or check the one you already built:
+
+```python
+report = strictness_report(mediator)
+if not report["strict"]:
+    for gap in report["gaps"]:
+        log.warning("axiomgate: %s", gap)
+```
+
+`strict_audit_log` has no default for its anchor argument, and `strict_mediator`
+refuses to build on an unanchored log or to have the ceiling turned off. Neither
+changes any default: import nothing from `strict` and the kernel behaves exactly as
+it did.
+
+The report is **self-reporting, not verification**. `AuditLog.anchored` is an ordinary
+writable attribute, so a caller who sets it by hand gets a clean report. This closes the
+gap where an honest integrator cannot tell which kernel they are running; it is not a
+defence against code lying about its own audit trail, and nothing in-process could be.
+See [docs/ROADMAP.md](docs/ROADMAP.md) R3.
 
 ## The linter, for what happens before runtime
 

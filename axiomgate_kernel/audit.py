@@ -74,6 +74,12 @@ class AuditLog:
         self._writer = writer or _atomic_append
         self._last_hash: Optional[str] = None
         self._count = 0
+        # Whether this log was opened against an anchor. Nothing inside the
+        # kernel could answer that before, so a deployment could not tell a
+        # log that detects a cut tail from one that replays it in silence --
+        # the two are the same object with the same records. Read by
+        # strict.strictness_report; see docs/ROADMAP.md R2.
+        self.anchored = anchor is not None
         self._lock = threading.RLock()
         directory = os.path.dirname(path)
         if directory:
