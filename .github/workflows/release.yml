@@ -1,0 +1,99 @@
+name: Release to PyPI
+
+# Publishes on a version tag, never on a branch push. The tag is the decision:
+# everything before it is reversible, and nothing after it is. PyPI does not
+# allow a version number to be reused, even after a deletion.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  # The tag does not get to skip the checks. By the time a tag is pushed it is
+  # too late to discover the suite was red.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ matrix.python-version }}
+    - run: pip install -e ".[dev]"
+    - run: pytest -q
+
+  claims:
+    # A release that publishes documentation making claims the code no longer
+    # supports is worse than no release. verify_claims.sh is what binds them.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - run: pip install -e ".[dev]"
+    - run: bash scripts/verify_claims.sh
+
+  build:
+    needs: [test, claims]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: '3.12'
+    - name: Build
+      run: |
+        python -m pip install --upgrade pip build twine
+        python -m build
+        twine check --strict dist/*
+    - name: The tag must match the version being published
+      # Otherwise a tag pushed on a tree that still carries the old version
+      # republishes that version -- which PyPI rejects as a duplicate, after
+      # the tag is already public.
+      run: |
+        TAG="${GITHUB_REF_NAME#v}"
+        WHEEL_VERSION="$(ls dist/*.whl | sed -E 's/.*-([0-9][^-]*)-py3.*/\1/')"
+        echo "tag=$TAG wheel=$WHEEL_VERSION"
+        if [ "$TAG" != "$WHEEL_VERSION" ]; then
+          echo "::error::tag $GITHUB_REF_NAME does not match built version $WHEEL_VERSION" >&2
+          exit 1
+        fi
+    - name: The suite must pass against the wheel, not the working tree
+      # Every other job installs with -e and imports the source tree, so a
+      # module missing from the wheel ships green. The copy is made somewhere
+      # the source tree cannot shadow the installed package.
+      run: |
+        python -m venv /tmp/wheeltest
+        /tmp/wheeltest/bin/pip install dist/*.whl pytest
+        mkdir -p /tmp/wheelsuite
+        cp -r tests examples scripts pyproject.toml /tmp/wheelsuite/
+        cd /tmp/wheelsuite
+        /tmp/wheeltest/bin/python -c "import axiomgate_kernel, pathlib; print('installed from', pathlib.Path(axiomgate_kernel.__file__).parent)"
+        /tmp/wheeltest/bin/python -m pytest tests -q \
+          --ignore=tests/test_no_embedded_identity.py
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: dist
+        path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted Publishing: PyPI verifies this workflow's OIDC identity, so there
+    # is no API token stored here to leak or rotate.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      with:
+        name: dist
+        path: dist/
+    - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
