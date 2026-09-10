@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+# Nothing in this workflow writes to the repository: it runs tests, a claim
+# verifier and a build. An L6 review 2026-09-11 pointed out that without this
+# block the token falls back to whatever the repository default happens to be,
+# which is a wider grant than any job here has a use for.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -73,8 +80,35 @@ jobs:
         python -m pip install --upgrade pip build twine
         python -m build
         twine check --strict dist/*
-    - name: Install the built wheel into a clean environment and import it
+    - name: Run the suite against the built wheel
+      # Every other job installs with `pip install -e .`, so all four of them
+      # import the package straight out of the working tree. A file left out of
+      # the wheel is invisible to an editable install by construction -- it
+      # would ship broken and every job would still be green. An import check
+      # alone does not close that: it loads __init__ and nothing else.
+      #
+      # The suite is copied out of the checkout first, deliberately. Run from
+      # the repository root, the `axiomgate_kernel/` directory sitting there
+      # shadows the installed package and the tests would measure the working
+      # tree again -- the very thing this job exists to avoid. examples/ and
+      # scripts/ come along because the suite imports examples/_setup.py;
+      # pyproject.toml comes along because without it pytest finds no config
+      # here and empty_parameter_set_mark stops applying, which is the one
+      # guard this job most needs.
+      #
+      # test_no_embedded_identity.py is excluded because it reads the *source
+      # tree*: it parametrises over the .py files in axiomgate_kernel/, which a
+      # wheel does not carry. Pointed at this directory its parameter set comes
+      # out empty -- 54 tests silently became 6, two of them skipped, and the
+      # run still reported green. That is why it is named here instead of being
+      # left to disappear on its own. It is a repository check, not a packaging
+      # check, and the test, claims and clean-install jobs all run it in full.
       run: |
         python -m venv /tmp/wheeltest
-        /tmp/wheeltest/bin/pip install dist/*.whl
-        /tmp/wheeltest/bin/python -c "import axiomgate_kernel; print(axiomgate_kernel.__name__)"
+        /tmp/wheeltest/bin/pip install dist/*.whl pytest
+        mkdir -p /tmp/wheelsuite
+        cp -r tests examples scripts pyproject.toml /tmp/wheelsuite/
+        cd /tmp/wheelsuite
+        /tmp/wheeltest/bin/python -c "import axiomgate_kernel, pathlib; print('installed from', pathlib.Path(axiomgate_kernel.__file__).parent)"
+        /tmp/wheeltest/bin/python -m pytest tests -q \
+          --ignore=tests/test_no_embedded_identity.py

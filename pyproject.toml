@@ -37,3 +37,10 @@ include = ["axiomgate_kernel*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A parametrised test whose parameter set comes out empty is skipped by
+# default, and a skip reads as green. test_no_embedded_identity.py builds its
+# parameters by listing the source files on disk -- so pointed at a tree
+# without them it examined nothing at all and still passed. Found 2026-09-11
+# while building the wheel job. Anything that ends up with nothing to check
+# now fails instead of quietly disappearing.
+empty_parameter_set_mark = "fail_at_collect"
