@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    - name: Install the package and its dev dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+    - name: Run the suite
+      run: pytest -q
+
+  claims:
+    # The 130 checks in verify_claims.sh are what bind every number in the
+    # README and the docs to a real run. Until this job existed they were only
+    # ever run by hand, on one machine -- so a claim could drift out of true
+    # for as long as nobody happened to run the script.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+    - name: Install the package and its dev dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+    - name: Verify every documented claim
+      run: bash scripts/verify_claims.sh
+
+  clean-install:
+    # README claims the suite passes in a fresh environment with nothing else
+    # in it. This is the job that shows it, rather than asking to be believed.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - name: Build the empty environment and run the suite inside it
+      run: bash scripts/verify_clean_install.sh
+
+  package:
+    # A wheel that does not build, or metadata a index would reject, is found
+    # at release time otherwise -- after the tag is already pushed.
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+    - name: Build and check the distribution
+      run: |
+        python -m pip install --upgrade pip build twine
+        python -m build
+        twine check --strict dist/*
+    - name: Install the built wheel into a clean environment and import it
+      run: |
+        python -m venv /tmp/wheeltest
+        /tmp/wheeltest/bin/pip install dist/*.whl
+        /tmp/wheeltest/bin/python -c "import axiomgate_kernel; print(axiomgate_kernel.__name__)"
