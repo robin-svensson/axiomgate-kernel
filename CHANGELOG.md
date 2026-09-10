@@ -28,10 +28,15 @@ each such change is listed here.
   a tree without the source directory, examined nothing at all and still passed.
   Anything with nothing left to check now fails at collection instead.
 
-## [0.9.0] — 2026-09-10
+## [0.9.0] — 2026-09-10 (not tagged)
 
-First public release of the kernel as its own repository, extracted from the
-scanner it grew up inside.
+The kernel became its own repository, extracted from the scanner it grew up
+inside, and was pushed public on 2026-09-10.
+
+It has never been tagged or released. `git tag -l` is empty, there are no
+releases, and nothing has been published to PyPI — `version = "0.9.0"` in
+`pyproject.toml` is the only place this number exists. The date above is the
+date the code went public, not the date of a release.
 
 ### Added
 - Four enforced protections: capability attenuation, fail-closed authorization,
@@ -50,4 +55,3 @@ scanner it grew up inside.
 ### Notes
 - Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE):
   source-available, not open source.
-- Not published to PyPI. This version exists as a git tag only.
