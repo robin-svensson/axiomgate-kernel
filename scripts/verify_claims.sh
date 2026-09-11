@@ -629,7 +629,7 @@ check_eq "ROADMAP's count for test_execution.py is the collected one" \
 
 echo "== 7. Code volume (README figures) =="
 check_eq "core files (.py)" "28" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "23" "$(find tests  -name '*.py' | wc -l)"
+check_eq "test files"       "24" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that

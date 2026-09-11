@@ -40,7 +40,59 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 REF="${1:-}"
-AGY="${AGY_BIN:-$HOME/.local/bin/agy}"
+# LOCAL GATE ONLY: these machine-specific paths and pins are not a CI setup.
+# Do not run this L6 configuration in CI; a portable CI trust policy is separate.
+# Known CI markers are a convenience guard, not universal CI detection or host
+# attestation. The pinned local installation remains mandatory on every route.
+case "${CI:-}" in
+  ""|0|[Ff][Aa][Ll][Ss][Ee]) ;;
+  *) echo "BLOCKED: LOCAL_ONLY_CI: these reviewer pins are local-only." >&2; exit 3 ;;
+esac
+if [[ -n "${JENKINS_URL:-}" ]]; then
+  echo "BLOCKED: LOCAL_ONLY_CI: these reviewer pins are local-only." >&2
+  exit 3
+fi
+
+# Re-pinning after a legitimate mise/npm update (never automatic):
+# 1. Keep the old installation until its replacement is approved. A newly
+#    installed version does not require a pin change if the old path still works.
+# 2. Verify the new canonical executable/package path, package version, source
+#    and update history against the intended installation. Do not execute an
+#    unexplained replacement just to ask it for its version. A hash mismatch
+#    alone proves neither a legitimate update nor malicious replacement.
+# 3. Obtain a candidate hash without changing trust, for example:
+#      /usr/bin/python3 scripts/l6_binary_identity.py --fingerprint file /absolute/path
+#    Use "tree" for the Gemini package, and pin its Node executable separately.
+#    Record the old/new paths, hashes and provenance evidence outside this repo.
+# 4. Prepare a diff of the explicit paths and hashes below. Have a different
+#    vendor review it with the evidence, then obtain maintainer approval before
+#    applying it. Run the identity regression tests and required repo gates.
+#    Do not use the unverified replacement to approve its own new pin.
+# 5. For an independently approved in-place update awaiting final re-pinning,
+#    a reviewed APPROVED_UPDATES entry can record its exact new fingerprint.
+#    Only a match to that record is diagnosed as PIN_STALE_APPROVED_UPDATE;
+#    it STILL exits 3. Promote the approved hash to the active pin and remove
+#    the transition record in the final approved diff. Never populate this map
+#    from environment variables or by copying an unexplained mismatch blindly.
+# Missing paths report PIN_TARGET_MISSING: restore the pinned installation or
+# follow the same approval procedure for a new path. Unexplained changed bytes
+# report PIN_CONTENT_CHANGED_UNVERIFIED: investigate before any re-pinning.
+# A selected route's identity failure blocks the gate; it never triggers fallback.
+# Pins prove inventoried file identity, not publisher authenticity or backend
+# vendor identity. Provider/model routing still needs its separate trust policy.
+declare -Ar APPROVED_UPDATES=()  # Keys: agy, codex, opencode, gemini-node, gemini-tree.
+AGY="$HOME/.local/bin/agy"
+CODEX_CLI="$HOME/.local/share/mise/installs/codex/0.153.4/bin/codex"
+OPENCODE_CLI="$HOME/.local/share/mise/installs/opencode/1.18.29/opencode"
+GEMINI_NODE="$HOME/.local/share/mise/installs/node/26.7.0/bin/node"
+GEMINI_PACKAGE="$HOME/.local/share/mise/installs/node/26.7.0/lib/node_modules/@google/gemini-cli"
+GEMINI_CLI="$GEMINI_PACKAGE/bundle/gemini.js"
+
+# Reject legacy routing overrides rather than silently ignoring caller intent.
+if [[ ${AGY_BIN+x} || ${GEMINI_CLI_BIN+x} ]]; then
+  echo "BLOCKED: AGY_BIN/GEMINI_CLI_BIN overrides are not allowed by the binary pins." >&2
+  exit 3
+fi
 PYTHON="${AXIOMGATE_KERNEL_PYTHON:-python3}"
 
 # Scratch goes on the data disk. /tmp here is tmpfs -- writing a large diff
@@ -83,12 +135,11 @@ model_vendor() {
 }
 CODEX_FALLBACK="gpt-5.6-luna" # outside agy, on a plan that is already paid for
 
-# The Gemini CLI is a separate tool from agy -- a different package, its own
-# auth -- so it survives agy failing. Whether it survives agy's *quota* running
-# out is unverified: both reach Google, and a shared account-level ceiling has
-# not been ruled out. It sits ahead of the Codex fallback because it is at least
-# a different vendor from whatever OpenAI wrote, which Codex cannot be.
-GEMINI_CLI="${GEMINI_CLI_BIN:-gemini}"
+# Invoke the pinned Google CLI package through pinned Node, never the PATH
+# shim named gemini (which delegates to agy on this machine). This separates
+# the executable routes, not necessarily their quota: both reach Google and
+# a shared account-level ceiling has not been ruled out. The existing auth
+# check below is only a configuration hint, not proof of working credentials.
 
 # opencode reaches models from vendors none of the layers above touch. That is
 # what makes it worth a layer of its own: it can review OpenAI-written code and
@@ -153,6 +204,40 @@ reviewer_allowed() {
   fi
   return 0
 }
+
+# This verifier is part of the reviewed gate. System Python and the operating
+# system are trusted here; the review Python override does not select it.
+IDENTITY="$(dirname "$VERDICT")/l6_binary_identity.py"
+check_binary() {
+  local role="$1"
+  if [[ ! -x /usr/bin/python3 || ! -r "$IDENTITY" ]]; then
+    echo "BLOCKED: PIN_VERIFIER_UNAVAILABLE: need /usr/bin/python3 and $IDENTITY." >&2
+    return 3
+  fi
+  case "$role" in
+    agy)
+      /usr/bin/python3 "$IDENTITY" file "$AGY" \
+        38f130cdd0757e1d22e151baa48ace4074a5bd3d960eb2dcc7f44bdf2ad4c0fd "${APPROVED_UPDATES[agy]:-}" ;;
+    codex)
+      /usr/bin/python3 "$IDENTITY" file "$CODEX_CLI" \
+        56ef98ab4032d317ab26e9b5e5a175650717351edb16ed9cde0cb6d1734d62da "${APPROVED_UPDATES[codex]:-}" ;;
+    opencode)
+      /usr/bin/python3 "$IDENTITY" file "$OPENCODE_CLI" \
+        ca6c0e1f42be3120595bf6848937e7586ec862c87fa7aa111e89c7cc6e9a4650 "${APPROVED_UPDATES[opencode]:-}" ;;
+    gemini)
+      /usr/bin/python3 "$IDENTITY" file "$GEMINI_NODE" \
+        ad19784f7e90ba789a099eccba77ede8dc90a778c424f1c10a70fed3ff903fdc "${APPROVED_UPDATES[gemini-node]:-}" &&
+      /usr/bin/python3 "$IDENTITY" tree "$GEMINI_PACKAGE" \
+        6d56bfc5446b14774578e5a719bff0a1a89f072e1b6732485ef5a47bcd8641d4 "${APPROVED_UPDATES[gemini-tree]:-}" ;;
+    *) return 3 ;;
+  esac
+}
+
+# Check only an allowed reviewer that is actually about to run. An unused
+# fallback's installation must not block the chosen independent reviewer.
+# Recheck immediately before each attempt because previous gates/reviews can
+# take time and an installer may have changed bytes in between. This narrows,
+# but does not eliminate, the documented check/launch race.
 
 WORK="$(mktemp -d "$SCRATCH_ROOT/review-XXXXXX")"
 # EMPTY is created below, outside WORK, so it needs naming here: a trap written
@@ -330,6 +415,7 @@ for M in "${MODELS[@]}"; do
   # An unrecognised model counts as a match: a guard that cannot place a model
   # must refuse it, not wave it through.
   reviewer_allowed "$M" || continue
+  check_binary agy || exit 3
   echo "== reviewer: $M =="
   OUT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 "$AGY" -p "$(cat "$WORK/brief.txt")" \
       --model "$M" --output-format json --json-schema "$WORK/schema.json" 2>/dev/null )"
@@ -348,18 +434,18 @@ done
 
 # --- 4b. the gemini CLI, outside agy --------------------------------------
 
-if [ -z "$RESULT" ] && reviewer_allowed "gemini-cli" \
-   && command -v "$GEMINI_CLI" >/dev/null 2>&1; then
+if [ -z "$RESULT" ] && reviewer_allowed "gemini-cli"; then
   # Unauthenticated is not the same as broken, and neither is a reason to treat
   # the change as reviewed. It is skipped with a reason rather than counted.
   if [ -z "${GEMINI_API_KEY:-}" ] && [ -z "${GOOGLE_GENAI_USE_GCA:-}" ] \
      && [ ! -s "$HOME/.gemini/settings.json" ]; then
     echo "== skipping the gemini CLI: no auth configured =="
-    echo "   Run 'GOOGLE_GENAI_USE_GCA=true gemini' once in a real terminal, or"
-    echo "   set GEMINI_API_KEY. Until then this layer does not exist."
+    echo "   Authenticate the pinned Google CLI in a terminal, or set GEMINI_API_KEY."
+    echo "   This layer is skipped until authentication is configured."
   else
+    check_binary gemini || exit 3
     echo "== reviewer: gemini CLI (outside agy) =="
-    TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 "$GEMINI_CLI" \
+    TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 "$GEMINI_NODE" "$GEMINI_CLI" \
         --skip-trust -p "$(cat "$WORK/brief.txt")" < /dev/null 2>/dev/null )"
     if [ -n "${TEXT//[[:space:]]/}" ]; then
       printf '%s\n' "$TEXT"
@@ -376,11 +462,10 @@ fi
 
 # --- 4c. opencode, a vendor none of the above share ------------------------
 
-if [ -z "$RESULT" ] \
-   && reviewer_allowed "$OPENCODE_MODEL" \
-   && command -v opencode >/dev/null 2>&1; then
+if [ -z "$RESULT" ] && reviewer_allowed "$OPENCODE_MODEL"; then
+  check_binary opencode || exit 3
   echo "== reviewer: $OPENCODE_MODEL via opencode =="
-  TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 opencode run --pure \
+  TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 "$OPENCODE_CLI" run --pure \
       -m "$OPENCODE_MODEL" "$(cat "$WORK/brief.txt")" < /dev/null 2>/dev/null )"
   if [ -n "${TEXT//[[:space:]]/}" ]; then
     printf '%s\n' "$TEXT"
@@ -412,8 +497,9 @@ if [ -z "$RESULT" ]; then
     echo "   and L6_ALLOW_SELF_REVIEW=1 overrode that refusal. Treat anything it"
     echo "   says as a hint, and nothing it stays silent about as cleared."
   fi
+  check_binary codex || exit 3
   echo "== reviewer: codex $CODEX_FALLBACK (outside agy) =="
-  TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 codex exec --model "$CODEX_FALLBACK" \
+  TEXT="$( cd "$EMPTY" && TMPDIR="$EMPTY" timeout 600 "$CODEX_CLI" exec --model "$CODEX_FALLBACK" \
       --sandbox read-only --skip-git-repo-check "$(cat "$WORK/brief.txt")" \
       < /dev/null 2>/dev/null )"
   if [ -z "${TEXT//[[:space:]]/}" ]; then

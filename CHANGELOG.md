@@ -17,6 +17,9 @@ each such change is listed here.
   of the five `ReservedGrantStore` method locks in an isolated copy and
   requires the full suite to reject it at the scheduled interleavings. Invariant
   grades are unchanged.
+- Pinned reviewer binaries and `scripts/l6_binary_identity.py` add fail-closed
+  identity checks for the local L6 review route, with regression coverage for
+  file and package-tree fingerprints and shell-level routing guards.
 
 ## [0.10.0] — 2026-09-11
 
