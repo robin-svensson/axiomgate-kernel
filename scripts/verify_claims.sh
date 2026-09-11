@@ -721,6 +721,18 @@ echo "== 11. The name and the packaging =="
 check_eq "the distribution name" "1" \
   "$(grep -c '^name = "axiomgate-kernel"$' pyproject.toml)"
 check_eq "the import package exists" "1" "$([ -f axiomgate_kernel/__init__.py ] && echo 1 || echo 0)"
+# Three places name the Python versions this package supports: the trove
+# classifiers, the CI matrix and the release matrix. They are three copies of
+# one fact, so they drift -- and the direction that drifts silently is the
+# dangerous one: a classifier promising a version no job ever runs. The
+# classifiers are the claim made to the world, so they are the source, and
+# both matrices have to match them exactly.
+PYVERS="$(grep -oE '^    "Programming Language :: Python :: 3\.[0-9]+",$' pyproject.toml \
+  | grep -oE '3\.[0-9]+' | sort -V | tr '\n' ' ')"
+for WF in .github/workflows/ci.yml .github/workflows/release.yml; do
+  check_eq "$WF runs every version the classifiers promise" "$PYVERS" \
+    "$(grep -oE 'python-version: \[.*\]' "$WF" | head -1 | grep -oE '3\.[0-9]+' | sort -V | tr '\n' ' ')"
+done
 check_eq "packages.find points to it" "1" \
   "$(grep -c 'include = \["axiomgate_kernel\*"\]' pyproject.toml)"
 # The search runs over tracked files, not the working directory. README asks

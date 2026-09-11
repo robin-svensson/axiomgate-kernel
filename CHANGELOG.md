@@ -10,7 +10,7 @@ each such change is listed here.
 ## [Unreleased]
 
 ### Added
-- `.github/workflows/ci.yml` — the suite on Python 3.10–3.13, `verify_claims.sh`,
+- `.github/workflows/ci.yml` — the suite on Python 3.10–3.14, `verify_claims.sh`,
   a clean-environment install, and a build that runs the suite against the built
   wheel rather than the working tree.
 - `.github/workflows/release.yml` — tag-triggered publication to PyPI via Trusted
