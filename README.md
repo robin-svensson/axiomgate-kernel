@@ -64,7 +64,7 @@ them — `strictness_report` and `strict_mediator`, R3.
 git clone https://github.com/robin-svensson/axiomgate-kernel.git
 cd axiomgate-kernel
 pip install -e ".[dev]"
-pytest -q                       # 314 tests
+pytest -q                       # 326 tests
 python examples/01_permit.py    # a request that is allowed
 python examples/02_deny.py      # three that are refused, three different ways
 python examples/03_audit_trail.py   # tampering with the log, and being caught
@@ -111,7 +111,7 @@ audit.append({"api_key": 1234567890})  # name rule    -> masked even though it i
 The name rule is deliberately blunt. In an append-only, HMAC-chained log a leak cannot
 be cleaned up afterwards — editing the entry breaks the chain that is the evidence — so
 masking a harmless field is the cheaper error. Verified against the kernel's own audit
-entries: of the 21 fields written in a real decision flow, none are masked —
+entries: of the 22 fields written in a real decision flow, none are masked —
 counted by `scripts/count_audit_fields.py`, which runs a real `PERMIT` through the
 mediator, and checked by `scripts/verify_claims.sh`. It said 17 until 2026-09-10:
 the number was true when written and rotted when provenance and mandates added four
@@ -189,6 +189,46 @@ anywhere. Authority that is referenced but not derived is worse than no
 authority at all — and being able to say precisely where the proof stops is the
 part competitors cannot copy.
 
+### Checking three of the invariants at runtime
+
+I1, I4 and I6 were marked `MODEL-ONLY` — and for one shared reason, not three. All
+three relate the model's *observation* log to its *enforcement* log, and the kernel
+had only the second. It already did the right thing: authentication happens before
+any decision is dispatched. But that is a property of the source text, provable only
+by reading it, and an invariant that holds by inspection is not enforced — it is true
+until somebody edits the file.
+
+```python
+from axiomgate_kernel import ObservationLog, check_invariants
+
+obs = ObservationLog()
+mediator = Mediator(authenticator=…, registry=…, audit=audit, provenance=…,
+                    observations=obs)
+...
+report = check_invariants(obs, audit.entries())
+report["I1"]["status"]   # HOLDS | PARTIAL | VIOLATED | UNOBSERVABLE
+report["holds"]          # every one of the three, or False
+```
+
+Each audit record carries an `observation_seq` field joining it to the observation
+taken before that enforcement, or `None` when the request was denied before an
+identity existed — a missing value, not a zero.
+
+**The four states are the point.** A check that cannot say *I don't know* will
+eventually say *yes* when it means it. No observation log at all is `UNOBSERVABLE`,
+not a quiet pass over an empty set; a log that saw nothing while enforcements were
+recorded is `VIOLATED`; an `observation_seq` pointing at no record is `VIOLATED` and
+never `PARTIAL`, because a dangling reference is a contradiction rather than missing
+data.
+
+The three invariants are now `PARTIAL`, not `ENFORCED`, and the difference is real:
+the log is opt-in, it lives in memory without a MAC chain, and `_observe` swallows its
+own exceptions on purpose — evidence about a run must not turn a legitimate PERMIT
+into a DENY. When it fails, the enforcement counts as unobserved and I1 drops to
+`PARTIAL`. The report gets worse, which is what should happen. **I5 stays
+`MODEL-ONLY`**: it needs a third log for execution, and grant redemption is unlogged.
+See [docs/ROADMAP.md](docs/ROADMAP.md) R4.
+
 ---
 
 ## Why this exists
@@ -258,7 +298,7 @@ None of them ships a model-checked governance specification.
 |---|---|
 | [docs/API.md](docs/API.md) | Public API, extracted from the running package |
 | [docs/TRACEABILITY.md](docs/TRACEABILITY.md) | TLA+ ↔ Python, per invariant, with honest status |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Declared debt: both items closed 2026-09-10, each with the deviation that keeps its protection opt-in written out |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Declared debt: R1–R3 closed, R4 partial, each with the deviation that keeps its protection opt-in written out |
 | [docs/REGULATORY.md](docs/REGULATORY.md) | The AI Act articles quoted verbatim, with dates, sources, and what could not be verified |
 | [docs/ANCHORING.md](docs/ANCHORING.md) | Integration note: how to anchor the audit chain, at what cadence, and what an anchor still cannot prove |
 | `examples/` | Three runnable examples: permit, refuse, trace |
@@ -267,7 +307,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.9.0. The code is mature — 314 tests, mutation-tested protections — but
+Version 0.9.0. The code is mature — 326 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires

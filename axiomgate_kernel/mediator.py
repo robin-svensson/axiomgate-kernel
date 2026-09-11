@@ -21,6 +21,7 @@ from .policy import PolicySnapshot
 from .principal import Principal
 from .provenance import ProvenanceChecker, ProvenanceKind, ProvenanceResult
 from .grant import GrantError, ReasonClass, ReservedGrantStore, scope_hash
+from .observation import ObservationLog
 from .domain import (
     ActionType,
     EscalationStatus,
@@ -49,6 +50,7 @@ class Mediator:
         available: bool = True,
         policy_token: Optional["ProvisioningToken"] = None,
         require_principal_context: bool = False,
+        observations: Optional["ObservationLog"] = None,
     ) -> None:
         self._authn = authenticator
         self._registry = registry
@@ -63,6 +65,13 @@ class Mediator:
         # off there is no provenance ceiling at all -- that is a declared
         # gap, not a hidden hole, and it is written out in docs/ROADMAP.md R1.
         self.require_principal_context = require_principal_context
+        # I1/I4/I6. Without this the kernel authenticates before it dispatches
+        # and leaves no evidence that it did: the ordering was a property of
+        # _gated's source text, not of the run. Off by default like every other
+        # opt-in protection -- see docs/ROADMAP.md R4 -- but the *absence* is
+        # reported as UNOBSERVABLE rather than passing, which is the difference
+        # between this and the two gaps R3 was written about.
+        self._observations = observations
         self._escalations = EscalationStore()
         self._evidence = EvidenceJournal()
         self._grants = ReservedGrantStore()
@@ -137,12 +146,54 @@ class Mediator:
             )
         if not authn.ok or authn.principal is None:
             return self._finish(Verdict.DENY, authn.reason, [authn.rule], canon, authn.principal)
+        # The observation is taken here and nowhere else: after an identity
+        # exists, before any decision is dispatched. Every DENY above this line
+        # is an enforcement without an observation, and check_invariants counts
+        # those rather than hiding them.
+        self._observe(canon, authn.principal)
         try:
             return then(canon, authn)
         except Exception as exc:
             return self._finish(
                 Verdict.DENY, f"fail-closed: {exc}", [f"{op}.error"], canon, authn.principal
             )
+
+    def _observe(self, canon: CanonicalRequest, principal: Principal) -> None:
+        """Record that this identity was seen, before anything is decided.
+
+        A failure here is swallowed deliberately, and it is the one place in
+        this file where that is right: the observation log is evidence about
+        the run, not part of the decision, and letting a bookkeeping error turn
+        a legitimate PERMIT into a DENY would make the kernel less trustworthy
+        rather than more. The cost is paid honestly -- no record is written, so
+        the enforcement is counted as unobserved and I1 drops to PARTIAL. The
+        report gets worse, which is exactly what should happen.
+        """
+        if self._observations is None:
+            return
+        try:
+            self._observations.record(
+                _safe_principal_id(principal),
+                canon.get("request_id"),
+                canon.full_payload_hash(),
+            )
+        except Exception:
+            pass
+
+    def _observation_seq(self, canon: CanonicalRequest) -> Optional[int]:
+        """The sequence number of this request's observation, or None.
+
+        None is written when there is no observation log, and when the request
+        was denied before one could be taken. A missing value is not zero and
+        not "the first one" -- it is the absence of a value.
+        """
+        if self._observations is None:
+            return None
+        try:
+            rec = self._observations.for_request(canon.get("request_id"))
+        except Exception:
+            return None
+        return rec.seq if rec is not None else None
 
     def _evaluate_authenticated(self, canon: CanonicalRequest, authn: AuthnResult) -> Decision:
         principal = authn.principal
@@ -677,6 +728,10 @@ class Mediator:
             "owner_decision": owner_decision,
             "execution_granted": verdict is Verdict.PERMIT,
             "payload_hash": canon.full_payload_hash(),
+            # Binds this enforcement to the observation that preceded it. None
+            # when the kernel has no observation log, or when the decision was
+            # reached before an identity existed. See observation.py.
+            "observation_seq": self._observation_seq(canon),
             # A missing value is not zero and not "no restriction" -- it is
             # the absence of a value, and is written as None.
             "provenance": frame.provenance if frame is not None else None,

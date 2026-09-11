@@ -230,3 +230,60 @@ run leaves behind, and refusing it would fail the strict path on a situation wit
 to protect. Detecting a total wipe requires the external anchor, which is exactly what
 R2 is for: a reopen that passes `head()` catches it, and one that claims `NEW_LOG` does
 not.
+
+## R4 — Three invariants held only by reading the source
+
+**Status: PARTIAL 2026-09-11** — I1, I4 and I6 moved from MODEL-ONLY to PARTIAL. They
+are not ENFORCED, and the reason is written out below rather than rounded away.
+
+`docs/TRACEABILITY.md` marked I1, I4 and I6 MODEL-ONLY. Read as three separate entries
+that looks like three separate debts. It was one: all three relate `obsLog` to
+`enforceLog`, and this implementation had only the second of the two logs.
+
+- **I1** — every enforcement is preceded by an observation
+- **I4** — observations are ordered consistently with the enforcements they precede
+- **I6** — an observation and its enforcement name the same principal
+
+The kernel already did the right thing. `_gated` authenticates before it dispatches, so
+an identity exists before any decision is taken. But that is a property of the *source
+text*, provable only by reading it — and an invariant that holds by inspection is not
+enforced, it is true until somebody edits the file. Nothing in the suite would have
+noticed the edit.
+
+**What was built** (`axiomgate_kernel/observation.py`, 10 tests in `tests/test_observation.py`,
+14 mechanical checks in `scripts/verify_claims.sh` §6c):
+
+1. **`ObservationLog`** — append-only. `entries()` returns a copy, records refuse
+   `__setattr__`, and `seq` starts at **1**, because `if seq:` on a legitimate zero reads
+   as absence.
+2. **`Mediator(observations=…)`** — opt-in, like R1 and R2. The observation is taken at
+   `mediator.py:153`: after authentication succeeded, before `then(canon, authn)`
+   dispatches anything. One site, not several.
+3. **`observation_seq`** in every audit record (`mediator.py:734`) — the join between the
+   two logs. `None` when there is no observation log, and `None` when the request was
+   denied before an identity existed. A missing value is not zero.
+4. **`check_invariants(observations, audit_entries)`** (`observation.py:143`) — answers
+   in four states, not two: `HOLDS`, `PARTIAL`, `VIOLATED`, `UNOBSERVABLE`. A check that
+   cannot say *I don't know* will eventually say *yes* when it means it.
+
+**The vacuous-truth cases are failures here, not passes.** No observation log at all is
+`UNOBSERVABLE` and `holds=False` — not a quiet pass over an empty set. A log that exists
+but saw nothing while enforcements were recorded is `VIOLATED`, for the same reason. An
+audit entry whose `observation_seq` points at no record is `VIOLATED` and never `PARTIAL`:
+a dangling reference is a contradiction, not incomplete data.
+
+**Why PARTIAL and not ENFORCED.** Three reasons, all real:
+
+- The log is **opt-in**. A `Mediator` built without `observations=` enforces exactly as
+  before and answers `UNOBSERVABLE`. The default kernel is not observed.
+- `_observe` **swallows its exceptions on purpose** (`mediator.py:161`). The observation
+  is evidence about the run, not part of the decision; a bookkeeping error must not turn
+  a legitimate PERMIT into a DENY. The cost is paid honestly — the enforcement is counted
+  as unobserved and I1 drops to PARTIAL. The report gets worse, which is correct.
+- The log lives **in memory and is not authenticated**. Unlike `AuditLog` there is no MAC
+  chain: it proves ordering within one process, not integrity across a restart.
+
+**What stays open: I5, and it needs a third log.** I5 relates `enforceLog` to `execLog` —
+enforcement before execution. Execution here is grant redemption at `grant.py:137`, and it
+is unlogged. Until an `execLog` exists, I5 stays MODEL-ONLY for the same single reason
+I1/I4/I6 were: the kernel does the right thing and cannot show it.

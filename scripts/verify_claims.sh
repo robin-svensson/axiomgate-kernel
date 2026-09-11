@@ -51,7 +51,7 @@ anchor() {
 
 echo "== 1. Test suite =="
 T="$("$PY" -m pytest tests -q 2>&1 | tail -1)"
-check_eq "whole suite green" "314 passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
+check_eq "whole suite green" "326 passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
 
 echo "== 2. Standalone: no dependency on the old src package =="
 LEAK="$(grep -rn 'src\.kernel\|from src\b\|"src\.' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -64,7 +64,7 @@ class B:
 sys.meta_path.insert(0,B())
 import pytest; sys.exit(pytest.main(['tests','-q','--tb=no']))
 " 2>&1 | tail -1 | grep -oE '^[0-9]+ passed')"
-check_eq "green even with src blocked" "314 passed" "$ISO"
+check_eq "green even with src blocked" "326 passed" "$ISO"
 
 echo "== 3. No false formal traceability =="
 INV="$(grep -rn 'I-[0-9]' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -92,6 +92,9 @@ anchor "audit _verify_links"         axiomgate_kernel/audit.py          361 'def
 anchor "COMMIT is Owner-only"        axiomgate_kernel/domain.py          15 'OWNER_MANDATORY_ACTIONS = frozenset'
 anchor "COMMIT gate (single point)" axiomgate_kernel/authorization.py 158 'OWNER_MANDATORY_ACTIONS'
 anchor "Verdict"                     axiomgate_kernel/domain.py          79 'class Verdict'
+anchor "I1  observe after authn"     axiomgate_kernel/mediator.py       153 'self\._observe\(canon, authn\.principal\)'
+anchor "I4  observation_seq in audit" axiomgate_kernel/mediator.py      734 '"observation_seq": self\._observation_seq'
+anchor "I1/I4/I6 check_invariants"   axiomgate_kernel/observation.py    143 'def check_invariants'
 
 # The anchors above are checked against the CODE. Review finding 2026-09-10:
 # the numbers stated in TRACEABILITY.md were a second, disconnected set --
@@ -496,9 +499,122 @@ check_eq "a strict kernel reports itself strict"        "True"  "$(get full_stri
 check_eq "a strict kernel names no gaps"                "0"     "$(get full_gaps)"
 check_eq "a strict kernel has the ceiling on"           "True"  "$(get full_ceiling)"
 
+echo "== 6c. The observation log: I1, I4 and I6 are answerable at runtime =="
+# Same principle as 6b. The claim in docs/TRACEABILITY.md is that these three
+# invariants can now be *checked* rather than read out of _gated's source, and
+# a claim about checking is only settled by running the check. Every value
+# below comes from a real Mediator deciding a real signed request.
+OBS="$(python3 - <<'PY2'
+import os, sys, tempfile
+sys.path.insert(0, os.path.join(os.getcwd(), "examples"))
+from _setup import build, request
+from axiomgate_kernel import (
+    ActionType, Mediator, ObservationError, ObservationLog, RiskLevel,
+    check_invariants, generate_key,
+)
+
+def watched():
+    m, agent_key, owner_key, audit, tmp = build()
+    obs = ObservationLog()
+    return Mediator(
+        authenticator=m._authn, registry=m._registry, audit=audit,
+        provenance=m._provenance, policy=m._policy, observations=obs,
+    ), obs, audit, agent_key
+
+def act(m, key):
+    return m.evaluate(request(
+        key, action_type=ActionType.EXECUTE.value, domain="code",
+        risk_level=RiskLevel.LOW.value, payload={"file": "a.py"},
+    ))
+
+out = []
+
+# A kernel with no observation log must answer "unobservable", never "holds".
+# Unconfirmed is not true, and this is the check that keeps it that way.
+m0, agent0, _o0, audit0, _t0 = build()
+act(m0, agent0)
+r0 = check_invariants(None, audit0.entries())
+out.append("no_log_i1=%s" % r0["I1"]["status"])
+out.append("no_log_holds=%s" % r0["holds"])
+
+# An empty observation log against a non-empty chain is not a pass either:
+# vacuous truth is the failure mode this kind of check dies of.
+r1 = check_invariants(ObservationLog(), audit0.entries())
+out.append("empty_log_i1=%s" % r1["I1"]["status"])
+
+# The observed kernel: all three hold, and the audit chain carries the binding.
+m, obs, audit, key = watched()
+act(m, key); act(m, key)
+r = check_invariants(obs, audit.entries())
+out.append("i1=%s" % r["I1"]["status"])
+out.append("i4=%s" % r["I4"]["status"])
+out.append("i6=%s" % r["I6"]["status"])
+out.append("holds=%s" % r["holds"])
+out.append("seqs=%s" % ",".join(str(e["observation_seq"]) for e in audit.entries()))
+
+# The honest gap: a decision reached before an identity exists has no
+# observation, is counted, and drops I1 to PARTIAL rather than being excluded.
+m.set_available(False); act(m, key)
+rp = check_invariants(obs, audit.entries())
+out.append("partial_i1=%s" % rp["I1"]["status"])
+out.append("partial_count=%s" % rp["I1"]["unobserved_enforcements"])
+out.append("partial_named=%s" % ("mediator.unavailable" in rp["I1"]["unobserved_rules"]))
+out.append("partial_holds=%s" % rp["holds"])
+
+# A check that cannot fail is not a check: a tampered principal must be caught.
+entries = audit.entries(); entries[0]["bound_principal"] = "someone-else"
+out.append("tampered_i6=%s" % check_invariants(obs, entries)["I6"]["status"])
+
+# The log establishes ordering, so it must not be rewritable.
+o = ObservationLog(); o.record("agent-a", "req-1", "h")
+try:
+    o.entries()[0].seq = 99; out.append("rewritable=yes")
+except ObservationError:
+    out.append("rewritable=no")
+
+print(" ".join(out))
+PY2
+)"
+oget() { echo "$OBS" | tr ' ' '\n' | grep "^$1=" | cut -d= -f2; }
+check_eq "a kernel with no observation log answers UNOBSERVABLE" "UNOBSERVABLE" "$(oget no_log_i1)"
+check_eq "UNOBSERVABLE does not count as holding"                "False"        "$(oget no_log_holds)"
+check_eq "an empty observation log is not a pass"                "VIOLATED"     "$(oget empty_log_i1)"
+check_eq "I1 holds over an observed kernel"                      "HOLDS"        "$(oget i1)"
+check_eq "I4 holds over an observed kernel"                      "HOLDS"        "$(oget i4)"
+check_eq "I6 holds over an observed kernel"                      "HOLDS"        "$(oget i6)"
+check_eq "all three hold together"                               "True"         "$(oget holds)"
+check_eq "the audit chain carries the observation sequence"      "1,2"          "$(oget seqs)"
+check_eq "a pre-identity denial drops I1 to PARTIAL"             "PARTIAL"      "$(oget partial_i1)"
+check_eq "the unobserved enforcement is counted"                 "1"            "$(oget partial_count)"
+check_eq "its rule is named, not just counted"                   "True"         "$(oget partial_named)"
+check_eq "PARTIAL does not count as holding"                     "False"        "$(oget partial_holds)"
+check_eq "a tampered principal is caught by I6"                  "VIOLATED"     "$(oget tampered_i6)"
+check_eq "the observation log cannot be rewritten"               "no"           "$(oget rewritable)"
+
+echo "== 6d. Numbers and samples stated in prose =="
+# The README example is code nobody runs. This one said check_invariants(obs.entries(), ...)
+# on first writing -- the function takes the log, not its entries, and the sample would
+# have raised AttributeError in a reader's hands. Cheap to state, cheap to check.
+README_CI="$(grep -oE 'check_invariants\([a-z_.()]+, audit\.entries\(\)\)' README.md | head -1)"
+check_eq "README shows the real call shape" "check_invariants(obs, audit.entries())" "$README_CI"
+
+# Test counts stated in prose drift the moment a test is added or removed. R4's
+# entry said 12 where the file holds 10 -- written from memory, not from a run.
+# The claimed number is read out of ROADMAP.md rather than restated here: a check
+# that compares a run against a second copy of the same guess proves nothing.
+collected() {
+  "$PY" -m pytest "$1" --collect-only -q 2>/dev/null \
+    | grep -oE '^[0-9]+ tests collected' | grep -oE '^[0-9]+'
+}
+claimed() { grep -oE "[0-9]+ tests in \`$1\`" docs/ROADMAP.md | grep -oE '^[0-9]+'; }
+check_eq "ROADMAP's count for test_observation.py is the collected one" \
+  "$(collected tests/test_observation.py)" "$(claimed tests/test_observation.py)"
+check_eq "ROADMAP's count for test_strict.py is the collected one" \
+  "$(collected tests/test_strict.py)" "$(claimed tests/test_strict.py)"
+
 echo "== 7. Code volume (README figures) =="
-check_eq "core files (.py)" "26" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "20" "$(find tests  -name '*.py' | wc -l)"
+check_eq "core files (.py)" "27" "$(find axiomgate_kernel -name '*.py' | wc -l)"
+check_eq "test files"       "21" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that
@@ -701,12 +817,12 @@ check_eq "API.md: signatures were compared at all" "1" \
 
 # The field count in README rotted once because nothing recomputed it.
 FIELDS="$("$PY" scripts/count_audit_fields.py 2>&1)"
-check_eq "the audit entry has 21 fields in a real run" "fields=21" \
+check_eq "the audit entry has 22 fields in a real run" "fields=22" \
   "$(echo "$FIELDS" | grep -oE 'fields=[0-9]+')"
 check_eq "no field is masked in that flow" "masked=0" \
   "$(echo "$FIELDS" | grep -oE 'masked=[0-9]+')"
 check_eq "README: same field count as the real run" "1" \
-  "$(grep -c 'of the 21 fields written in a real decision flow' README.md)"
+  "$(grep -c 'of the 22 fields written in a real decision flow' README.md)"
 
 echo
 echo "-------- $PASS PASS / $FAIL FAIL --------"

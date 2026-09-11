@@ -71,7 +71,8 @@ Mediator(authenticator: Authenticator,
          policy: PolicySnapshot | None = None,
          *, available: bool = True,
          policy_token: ProvisioningToken | None = None,
-         require_principal_context: bool = False)
+         require_principal_context: bool = False,
+         observations: ObservationLog | None = None)
 ```
 
 | Method | Returns | Purpose |

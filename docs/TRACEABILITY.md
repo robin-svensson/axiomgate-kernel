@@ -56,12 +56,12 @@ Status values:
 
 | # | TLA+ definition | What it says | Status | Python anchor |
 |---|---|---|---|---|
-| I1 | `I1_Observability` | Every enforcement has an identity-bound observation | MODEL-ONLY | — |
+| I1 | `I1_Observability` | Every enforcement has an identity-bound observation | PARTIAL | `mediator.py:153` takes the observation after authentication and before dispatch; `observation.py:143` `check_invariants` reports it. PARTIAL because a decision reached *before* an identity exists — unavailable mediator, uncanonicalizable request, failed authentication — has no observation and cannot have one. Those are counted and their rules named, never excluded. Opt-in: `Mediator(observations=ObservationLog())`, and a kernel without one reports UNOBSERVABLE, not HOLDS. |
 | I2 | `I2_Deniability` | Every executed action was authorized for its resource | **ENFORCED** | `authorization.py:91` `check_capability` — no capability, or capability not matching principal/domain/action/risk ⇒ DENY |
 | I3 | `I3_Immutability` | After bootstrap, authority policy never changes | **ENFORCED** | `capability.py:167` `seal()` + `provisioning.py` `ProvisioningToken`; a sealed registry rejects further registration |
-| I4 | `I4_TemporalOrdering` | Observation precedes enforcement | MODEL-ONLY | — |
+| I4 | `I4_TemporalOrdering` | Observation precedes enforcement | PARTIAL | `mediator.py:734` writes the observation's sequence number into the audit entry; `observation.py:143` checks those sequences increase strictly in chain order. PARTIAL, and the narrowing is real: this confirms the two logs are *consistent with* observation preceding enforcement — an interleaving that broke the order would show — but nothing reading two logs after the fact can derive the ordering itself. |
 | I5 | `I5_Completeness` | Every execution has a matching observation | MODEL-ONLY | — |
-| I6 | `I6_Consistency` | `obsLog` and `enforceLog` are identity-bound | MODEL-ONLY | — |
+| I6 | `I6_Consistency` | `obsLog` and `enforceLog` are identity-bound | PARTIAL | `observation.py:143` compares `bound_principal` in each audit entry against `principal_id` in the observation it cites; a disagreeing pair is VIOLATED. PARTIAL only because it is opt-in and covers the observed entries — the same boundary as I1. |
 | I7 | `I7_ExternalAuthority` | `∀ e ∈ Entity, a ∈ Authority: a ≠ e` — the authority is never the entity it judges | **ANALOGY ONLY** | See the note below. `evidence.py:174` / `evidence.py:229` enforce a *related but different* property. |
 | I8 | `I8_SemanticCorrectness` | Intent matches policy | PARTIAL | `grant.py:45` binds `policy_hash` into the grant, so an escalate→decide→reenter cycle cannot complete under a different policy. The model's `SemanticallyCorrect` is broader. |
 | I9 | `I9_TrustVerification` | Enforcement is done by a trusted authority | **ENFORCED** | `authentication.py:179` `authenticate` — HMAC over the canonical request; `authentication.py:200` constant-time compare |
@@ -101,9 +101,20 @@ was mutation-tested on 2026-09-09. It needs no invariant number.
 
 ## What would close the gap
 
-Making the MODEL-ONLY rows enforceable requires building the `obsLog` / `enforceLog` /
-`execLog` abstraction in Python and asserting the invariants over it at runtime. That is
-real work, not a rename. Until it is done, this table is the honest ceiling of the claim:
+Two of the three logs now exist. `observation.py` is the `obsLog`, the audit chain is the
+`enforceLog`, and `check_invariants` asserts I1, I4 and I6 over the pair at runtime — which
+is why those three rows moved from MODEL-ONLY to PARTIAL on 2026-09-11. Each moved to
+PARTIAL and not to ENFORCED, deliberately: the check is opt-in, it cannot cover decisions
+made before an identity exists, and I4 confirms consistency with an ordering rather than
+deriving it. Claiming ENFORCED for any of them would put this document back in the
+business this document exists to correct.
+
+**`execLog` is still missing, and I5 is still MODEL-ONLY.** Execution in this kernel is the
+redemption of a `ReservedGrant` (`grant.py:137`), and nothing records that redemption in a
+log the invariant could be checked against. Until it does, "every execution has a matching
+observation" remains a statement about the model only.
+
+Until that is done, this table is the honest ceiling of the claim:
 
 > The governance model has been exhaustively model-checked at bounded size. The
 > implementation enforces the properties in the ENFORCED rows. It has not been proven

@@ -19,6 +19,32 @@ each such change is listed here.
 - `SECURITY.md` — a private channel for reporting a fail-open decision,
   an authentication bypass, capability escalation or audit tampering.
 - `.github/dependabot.yml` — weekly updates for the pinned GitHub Actions.
+- `axiomgate_kernel/observation.py` — `ObservationLog`, `ObservationRecord`,
+  `ObservationError` and `check_invariants`. `docs/TRACEABILITY.md` marked I1, I4
+  and I6 `MODEL-ONLY`, which read as three debts and was one: all three relate the
+  model's observation log to its enforcement log, and this kernel had only the
+  second. The kernel already authenticated before dispatching — but that was a
+  property of the source text, provable only by reading it, and nothing in the
+  suite would have noticed an edit. `check_invariants` answers in four states
+  (`HOLDS`, `PARTIAL`, `VIOLATED`, `UNOBSERVABLE`), because a check that cannot say
+  *I don't know* will eventually say *yes* when it means it: no log at all is
+  `UNOBSERVABLE`, a log that saw nothing while enforcements were recorded is
+  `VIOLATED`, and a dangling `observation_seq` is `VIOLATED` and never `PARTIAL`.
+  See [docs/ROADMAP.md](docs/ROADMAP.md) R4.
+- `Mediator(observations=…)` — opt-in, like the other two protections. The
+  observation is taken at one site: after authentication succeeded, before anything
+  is dispatched. A failure to record is swallowed deliberately — evidence about a
+  run must not turn a legitimate PERMIT into a DENY — and the enforcement then counts
+  as unobserved, dropping I1 to `PARTIAL`.
+- `observation_seq` in every audit record, joining an enforcement to the observation
+  that preceded it. `None` when there is no observation log and when the request was
+  denied before an identity existed. The audit record now has 22 fields, was 21.
+- `tests/test_observation.py` (10 tests) and §6c of `scripts/verify_claims.sh`
+  (14 checks that run a real `Mediator` against real signed requests).
+- A check that the `check_invariants` call shown in README.md is the call the
+  function actually accepts. The first draft of that example passed `obs.entries()`
+  where the log belongs; README code is code nobody runs.
+
 - `axiomgate_kernel/strict.py` — `strict_audit_log`, `strict_mediator`,
   `strictness_report` and the `NEW_LOG` sentinel. The two fail-closed protections
   (R1's provenance ceiling, R2's audit anchor) are opt-in on two different objects,
@@ -46,10 +72,14 @@ each such change is listed here.
   and a skip reads as green — so `tests/test_no_embedded_identity.py`, pointed at
   a tree without the source directory, examined nothing at all and still passed.
   Anything with nothing left to check now fails at collection instead.
-- The suite is 314 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
+- The suite is 326 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
   line anchors in `scripts/verify_claims.sh` were corrected to match — the claim
   verifier caught all four drifted `audit.py` line numbers and both file counts,
-  which is what it is for.
+  which is what it is for, and caught seven more after the observation work.
+- `docs/TRACEABILITY.md`: I1, I4 and I6 moved from `MODEL-ONLY` to `PARTIAL`, each
+  with the file and line that carries it. Not `ENFORCED` — the observation log is
+  opt-in, lives in memory without a MAC chain, and records on a best-effort basis.
+  Claiming `ENFORCED` would put the document back in the practice it exists to correct.
 
 ### Limits, stated rather than defended
 - `strictness_report` is **self-reporting, not verification**. `AuditLog.anchored`
@@ -57,6 +87,11 @@ each such change is listed here.
   any object carrying it — gets a clean report. What R3 closes is that an *honest*
   integrator could not tell which kernel they were running. Code lying to its own
   audit trail is not addressable in-process; it can call `Mediator` directly.
+- The observation log proves **ordering within one process**, not integrity across a
+  restart. Unlike `AuditLog` it has no MAC chain and is never written to disk.
+- **I5 stays `MODEL-ONLY`.** It relates enforcement to execution, execution here is
+  grant redemption at `grant.py:137`, and that is unlogged. Same single reason
+  I1/I4/I6 had: the kernel does the right thing and cannot show it.
 - A log truncated to **zero bytes** is indistinguishable from a first run, so the
   `NEW_LOG` path accepts it. Deliberate: a created-but-unwritten file is what a
   crashed first run leaves behind. Detecting a total wipe needs the external
