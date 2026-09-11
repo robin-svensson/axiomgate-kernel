@@ -829,6 +829,30 @@ check_eq "API.md: all documented signatures match" "0" "$APIRC"
 APICOUNT="$(echo "$APIDOC" | grep -oE '^[0-9]+ signatures' | grep -oE '^[0-9]+')"
 check_eq "API.md: signatures were compared at all" "1" \
   "$([ "${APICOUNT:-0}" -ge 40 ] && echo 1 || echo 0)"
+# One truth source: the figure API.md states about itself is the figure the
+# check reports. It was written by hand once and was stale within two commits.
+check_eq "API.md: the figure it states is the one the check reports" "$APICOUNT" \
+  "$(grep -oE 'quoted in this file it checks [0-9]+' docs/API.md | grep -oE '[0-9]+')"
+
+# check_api_doc.py catches drift in what API.md already documents. It cannot
+# catch absence, and absence is what actually happened: R3, R4 and R5 each
+# added public names that README goes on to name, while the API reference
+# never mentioned them at all. Six names were undocumented before this check
+# existed.
+MISSING_API="$("$PY" - <<'PYEOF'
+import re, sys
+sys.path.insert(0, ".")
+import axiomgate_kernel
+
+readme = open("README.md", encoding="utf-8").read()
+api = open("docs/API.md", encoding="utf-8").read()
+missing = [n for n in axiomgate_kernel.__all__
+           if re.search(rf"\b{re.escape(n)}\b", readme)
+           and not re.search(rf"\b{re.escape(n)}\b", api)]
+print(",".join(sorted(missing)))
+PYEOF
+)"
+check_eq "every public name README mentions is documented in API.md" "" "$MISSING_API"
 
 # The field count in README rotted once because nothing recomputed it.
 FIELDS="$("$PY" scripts/count_audit_fields.py 2>&1)"

@@ -100,6 +100,18 @@ each such change is listed here.
   with the file and line that carries it. Not `ENFORCED` — the observation log is
   opt-in, lives in memory without a MAC chain, and records on a best-effort basis.
   Claiming `ENFORCED` would put the document back in the practice it exists to correct.
+- `docs/API.md` documents the strict path (`strict_audit_log`, `strict_mediator`,
+  `strictness_report`, `NEW_LOG`), `ObservationLog` with `check_invariants`, and
+  `ExecutionLog` with `check_execution_invariant`. R3, R4 and R5 each added public
+  names that README then named, while the API reference never mentioned them:
+  `scripts/check_api_doc.py` compares what the document already says against the
+  package, so it catches drift and is blind to absence. A check in
+  `scripts/verify_claims.sh` now fails when a name in `__all__` that README mentions
+  is missing from `docs/API.md`, and a second check makes the document's own figure
+  ("of the 62 calls quoted in this file it checks 59") come from the run rather than
+  from memory. Six names were missing when the check was written; `Capability` was
+  the seventh, named only through `make_capability`.
+- `README.md`: the clean-environment figure is 346 passed, was 299.
 
 ### Limits, stated rather than defended
 - `strictness_report` is **self-reporting, not verification**. `AuditLog.anchored`

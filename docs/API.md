@@ -4,7 +4,7 @@ Every signature in this document is checked against the running package.
 `scripts/check_api_doc.py` resolves each call quoted here — table rows, the shorthand
 method rows that begin with a dot, and the signatures in code blocks — and compares its parameter
 names, in order, against `inspect.signature`. A call it cannot resolve is a failure,
-not a silent pass. Of the 46 calls quoted in this file it checks 43; the other three
+not a silent pass. Of the 62 calls quoted in this file it checks 59; the other three
 are `min` and `frozenset`, which claim nothing about this package. Regenerate the
 reference dump with `python scripts/dump_api.py`; `scripts/verify_claims.sh` runs the
 comparison and fails on any drift.
@@ -114,7 +114,7 @@ this is the deliberate behaviour when the kernel is unreachable.
 | `.seal(token)` | Close the roster permanently. |
 | `Authenticator(keys: PrincipalKeyStore, nonces: NonceTracker | None = None)` | Verifies request signatures. Pass a `NonceTracker` to reject replays; without one, a captured signed request stays valid until its timestamp ages out. |
 | `sign_request(request: dict, key: bytes) -> dict` | Sign a request body. |
-| `make_capability(*, capability_id, principal_id, role, domains, action_types, risk_ceiling, issued_by, issued_at, expires_at, transferable=False, delegation_depth=1, revoked_at=None)` | Build a capability. Every argument is keyword-only. |
+| `make_capability(*, capability_id, principal_id, role, domains, action_types, risk_ceiling, issued_by, issued_at, expires_at, transferable=False, delegation_depth=1, revoked_at=None)` | Build a frozen `Capability`. Every argument is keyword-only. |
 | `CapabilityRegistry(bootstrap=None)` | Holds capabilities. |
 | `.register(capability, token)` / `.revoke(capability_id, token, when=None)` / `.seal(token)` | Lifecycle; all token-gated. |
 | `.active_for(principal_id, now=None)` | Non-expired, non-revoked capabilities. |
@@ -222,6 +222,112 @@ capability check against the live registry regardless. A grant cannot be replaye
 
 `ReasonClass` records *why* the escalation happened — five classes:
 `owner_mandatory_action`, `owner_mandatory_risk`, `policy`, `provenance`, `other`.
+
+## The strict path
+
+Two protections are off unless an integrator turns them on: the provenance ceiling
+(`Mediator(..., require_principal_context=True)`, R1) and truncation detection
+(`AuditLog(..., anchor=...)`, R2). They live on different objects and are passed at
+different call sites, so a deployment that wired one and believed it had both was
+told nothing. These three names are the second, narrower door — they change no
+default, and a caller who never imports them gets exactly the kernel they had.
+
+```python
+strict_audit_log(path, mac_key, anchor, *, writer=None)
+```
+
+`anchor` is positional and has no default: that is the whole mechanism. Pass a prior
+`head()` tuple kept **outside** the log file, or the sentinel `NEW_LOG` when no chain
+exists yet. `NEW_LOG` is a claim, not a way to skip the anchor — it is refused with
+`StrictnessError` if a chain is already on disk. One case it cannot catch is a file
+truncated to *zero bytes*, which is indistinguishable from a crashed first run; the
+external anchor is what catches that, and does.
+
+```python
+strict_mediator(*, authenticator, registry, audit, provenance, policy=None,
+                available=True, policy_token=None, require_principal_context=True)
+```
+
+Builds a Mediator with both protections on, or refuses to build one. It rejects an
+audit log that was not opened strictly, and rejects `require_principal_context=False`
+rather than ignoring it — a caller who wants the unbounded kernel wants `Mediator`,
+where the call site says so.
+
+```python
+strictness_report(mediator)
+```
+
+Asks a live kernel which protections it has: `strict`, `provenance_ceiling`,
+`audit_anchored`, and `gaps`. `gaps` names each missing protection and the flag that
+turns it on, because a bare `False` tells an operator nothing about what to wire.
+Reads state, never changes it; safe to call at startup and print.
+
+**The boundary, stated rather than hidden.** All of this is self-reporting.
+`AuditLog.anchored` is an ordinary writable attribute, and both functions read it
+instead of establishing how the object was built. Set it by hand and the report comes
+back clean. What this closes is that an *honest* integrator could not tell which
+kernel they were running; code that lies to its own audit trail can call `Mediator`
+directly and skip the module entirely.
+
+---
+
+## `ObservationLog`
+
+The record of what was actually looked at. `INSPECT` verdicts are what make I1, I4 and
+I6 checkable at runtime rather than model-only: without a log of observations, "a
+decision followed an inspection" is a claim about intent.
+
+| Call | Meaning |
+|---|---|
+| `.record(principal_id, request_id, payload_hash)` | Appends one observation. Returns the `ObservationRecord`. |
+| `.for_request(request_id)` | The **latest** observation for that request, or `None`. |
+| `.entries()` | A copy of the log, in order. |
+
+A `request_id` of `None` is a missing value, not a key: such observations are stored
+but are not retrievable by request. Two observations sharing a `request_id` are both
+kept, and `for_request` reports the later one.
+
+```python
+check_invariants(observations, audit_entries)
+```
+
+Returns `status`, `holds`, `detail` and the matched and unmatched entries. `status` is
+one of `HOLDS`, `PARTIAL`, `VIOLATED`, `UNOBSERVABLE` — four, not two, because a check
+that cannot say *I do not know* eventually says *yes* when it means it. An empty log is
+`PARTIAL`, never `HOLDS`: nothing was checked, and vacuous truth is the failure mode
+these four states exist to prevent.
+
+---
+
+## `ExecutionLog`
+
+The record of what was actually run, and of what was taken back.
+
+| Call | Meaning |
+|---|---|
+| `.record(*, request_id, principal_id, escalation_id)` | Appends one execution. Returns the `ExecutionRecord`. |
+| `.mark_rolled_back(seq)` | Marks an entry rolled back. Nothing is ever deleted. |
+| `.for_request(request_id)` | The latest execution for that request, or `None`. |
+| `.entries()` | A copy of the log, in order. |
+
+Passing a log to `Mediator(..., executions=...)` is what moves I5 from model-only to
+partial: the mediator records an execution when a grant is redeemed, and marks it
+rolled back when it is unconsumed.
+
+Marking rather than deleting is the entire design reason. `unconsume` exists, so an
+execution can be taken back — and a log that forgot the withdrawn entry would report
+the same history as one where it never happened.
+
+```python
+check_execution_invariant(executions, observations)
+```
+
+Every execution that stands must have an observation behind it. Same four statuses as
+above, and the same rule about vacuous truth, with one addition learnt from review: a
+log containing **nothing but rollbacks** is `PARTIAL`, not `HOLDS`. Zero confirmed
+executions is evidence of nothing whether the log is empty or merely busy.
+
+---
 
 ---
 

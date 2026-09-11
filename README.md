@@ -78,7 +78,7 @@ from axiomgate_kernel import Mediator, AuditLog, Verdict
 ```
 
 One runtime dependency (`cryptography`) and one for development (`pytest`). The
-suite runs in a fresh virtual environment containing nothing else — 299 passed,
+suite runs in a fresh virtual environment containing nothing else — 346 passed,
 with no `PYTHONPATH` and no editable install of anything but this package — so a
 green suite here is not an artefact of a pre-populated environment. Reproduce it
 with `bash scripts/verify_clean_install.sh`, which builds the empty environment,
