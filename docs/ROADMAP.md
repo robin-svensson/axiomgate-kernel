@@ -302,7 +302,7 @@ on consume and stopped there would carry an execution that never happened, and w
 carrying it after the rollback. That is worse than no log: it reports an execution the
 kernel deliberately undid. Deleting the entry instead would lose that it was attempted.
 
-**What was built** (`axiomgate_kernel/execution.py`, 13 tests in `tests/test_execution.py`):
+**What was built** (`axiomgate_kernel/execution.py`, 16 tests in `tests/test_execution.py`):
 
 1. **`ExecutionLog`** — append-only, three states rather than two: executed, rolled back,
    never happened. `entries()` returns a copy, records refuse `__setattr__`, and `seq`
@@ -315,9 +315,12 @@ kernel deliberately undid. Deleting the entry instead would lose that it was att
    four states as R4. A rolled-back record needs no observation; a live one without a
    matching observation is `VIOLATED`.
 
-**An empty execution log is `PARTIAL`, not `HOLDS`.** Nothing has been executed, so nothing
-has been contradicted — but a green answer over an empty set is exactly the vacuous truth
-R4 was written to refuse.
+**An empty execution log is `PARTIAL`, not `HOLDS`** — nothing has been executed, so nothing
+has been contradicted, and a green answer over an empty set is exactly the vacuous truth R4
+was written to refuse. **So is a log of nothing but rollbacks**, which is the same fact in a
+busier shape: zero executions stand, and the entries are there to make the report look
+substantiated. The first version answered `HOLDS` to that, and an L6 review found it by
+constructing the log rather than by reading the code.
 
 **Why PARTIAL and not ENFORCED.** The same three deviations as R4, plus one of its own:
 

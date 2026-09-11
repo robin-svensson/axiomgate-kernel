@@ -193,18 +193,27 @@ def check_execution_invariant(
             "rolled_back": rolled_back,
         }
 
-    if not matched and not rolled_back:
-        # Nothing executed at all. That is evidence of nothing, and calling it
-        # HOLDS is the vacuous truth the four states exist to prevent.
+    if not matched:
+        # No execution stood. That is evidence of nothing, and calling it HOLDS is
+        # the vacuous truth the four states exist to prevent. A log of nothing but
+        # rollbacks is the same fact wearing a busier shape: zero confirmed
+        # executions, with entries present to make the report look substantiated.
+        if rolled_back:
+            detail = (f"{len(rolled_back)} execution(s) were recorded and all of them "
+                      "were rolled back, so no execution stands to have been observed. "
+                      "The invariant was not contradicted and it was not confirmed "
+                      "either -- a busy-looking log is not evidence.")
+        else:
+            detail = ("the execution log is empty, so nothing was checked. An empty "
+                      "set satisfies 'every execution has an observation' vacuously, "
+                      "which is not evidence that the kernel does.")
         return {
             "status": PARTIAL,
             "holds": False,
-            "detail": "the execution log is empty, so nothing was checked. An empty "
-                      "set satisfies 'every execution has an observation' vacuously, "
-                      "which is not evidence that the kernel does.",
+            "detail": detail,
             "matched": [],
             "unmatched": [],
-            "rolled_back": [],
+            "rolled_back": rolled_back,
         }
 
     return {

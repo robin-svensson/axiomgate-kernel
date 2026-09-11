@@ -189,15 +189,21 @@ def test_an_execution_matched_by_an_observation_holds():
 
 
 def test_a_rolled_back_execution_needs_no_observation():
-    """It did not execute. Demanding an observation for it would report
-    VIOLATED on a kernel that behaved correctly, and a check that cries wolf on
-    correct behaviour gets turned off."""
+    """It did not execute. Demanding an observation for it would report VIOLATED
+    on a kernel that behaved correctly, and a check that cries wolf on correct
+    behaviour gets turned off.
+
+    Not VIOLATED, and not HOLDS either: an undone execution confirms nothing, so
+    the answer is the same PARTIAL an empty log gets. This asserted HOLDS in its
+    first version, which let one rollback stand in for a checked invariant."""
     executions = ExecutionLog()
     rec = executions.record(request_id="ghost", principal_id="p-1", escalation_id="e")
     executions.mark_rolled_back(rec.seq)
 
     report = check_execution_invariant(executions, ObservationLog())
-    assert report["status"] == HOLDS
+    assert report["status"] == PARTIAL
+    assert report["unmatched"] == []
+    assert report["rolled_back"] == [rec.seq]
 
 
 def test_an_execution_naming_a_different_principal_is_violated():
@@ -226,6 +232,62 @@ def test_an_empty_execution_log_beside_observations_is_partial_not_holds():
 
 
 # --- the whole chain through a real kernel -----------------------------------
+
+def test_a_log_of_nothing_but_rollbacks_is_not_a_pass():
+    """An empty execution log reports PARTIAL because nothing was checked. A log
+    holding two entries that were both rolled back is the same fact in a
+    different shape -- zero confirmed executions -- and it reported HOLDS.
+
+    An operator reading HOLDS has been told the invariant was checked against
+    something. It was checked against nothing, and the log looking busy is what
+    makes this worse than the empty case rather than better."""
+    execs, obs = ExecutionLog(), ObservationLog()
+    for i in range(2):
+        rec = execs.record(request_id=f"r{i}", principal_id="agent-a", escalation_id=None)
+        execs.mark_rolled_back(rec.seq)
+
+    report = check_execution_invariant(execs, obs)
+    assert report["status"] == PARTIAL, report["detail"]
+    assert report["holds"] is False
+    assert report["matched"] == []
+    assert len(report["rolled_back"]) == 2
+
+
+def test_one_real_execution_still_holds_alongside_rollbacks():
+    """The fix above must not turn rollbacks into contamination. A run that
+    executed once and took another one back has confirmed the invariant on the
+    one that counted, and reporting PARTIAL there would make the check useless
+    for any kernel that ever rolls anything back."""
+    execs, obs = ExecutionLog(), ObservationLog()
+    obs.record("agent-a", "r-live", b"hash")
+    execs.record(request_id="r-live", principal_id="agent-a", escalation_id=None)
+    undone = execs.record(request_id="r-undone", principal_id="agent-a", escalation_id=None)
+    execs.mark_rolled_back(undone.seq)
+
+    report = check_execution_invariant(execs, obs)
+    assert report["status"] == HOLDS, report["detail"]
+    assert report["matched"] == [1]
+    assert report["rolled_back"] == [2]
+
+
+def test_two_observations_sharing_a_request_id_report_the_later_one():
+    """Characterisation, not regression: the lookup is keyed on request_id, so
+    a second observation with the same one replaces the first. An execution
+    matching only the replaced observation is reported VIOLATED even though a
+    matching observation exists in the log.
+
+    That direction is the safe one -- a false alarm, never a silent pass -- and
+    nothing upstream enforces request_id uniqueness, so it is written down here
+    rather than left for somebody to rediscover as a bug."""
+    execs, obs = ExecutionLog(), ObservationLog()
+    obs.record("agent-a", "shared", b"hash")
+    obs.record("agent-b", "shared", b"hash")
+    execs.record(request_id="shared", principal_id="agent-a", escalation_id=None)
+
+    report = check_execution_invariant(execs, obs)
+    assert report["status"] == VIOLATED
+    assert "agent-b" in report["unmatched"][0]["why"]
+
 
 def test_a_real_escalation_cycle_produces_a_matched_execution():
     """The unit tests above build the two logs by hand, which proves the check

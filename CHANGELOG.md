@@ -54,12 +54,12 @@ each such change is listed here.
   downstream audit logging fails, so a log that only appended would keep reporting an
   execution the kernel deliberately took back. The log marks rather than deletes, and
   the check reads three states — executed, rolled back, never happened. An empty
-  execution log is `PARTIAL`, never `HOLDS`. See [docs/ROADMAP.md](docs/ROADMAP.md) R5.
+  execution log is `PARTIAL`, never `HOLDS`, and so is a log of nothing but rollbacks. See [docs/ROADMAP.md](docs/ROADMAP.md) R5.
 - `Mediator(executions=…)` and `ReservedGrantStore(executions=…)` — opt-in, passed
   straight through: the store is what redeems a grant. The record is written after
   every binding check has passed, not on entry, because a redemption refused for a
   principal mismatch is not an execution.
-- `tests/test_execution.py` (13 tests), the last of which runs the only path that
+- `tests/test_execution.py` (16 tests), the last of which runs the only path that
   reaches an execution — `evaluate` → `decide_escalation` → `reenter` → redemption —
   through a real `Mediator`. The unit tests above it build both logs by hand, which
   proves the check and not the wiring: without the end-to-end test the kernel could
@@ -92,7 +92,7 @@ each such change is listed here.
   and a skip reads as green — so `tests/test_no_embedded_identity.py`, pointed at
   a tree without the source directory, examined nothing at all and still passed.
   Anything with nothing left to check now fails at collection instead.
-- The suite is 343 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
+- The suite is 346 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
   line anchors in `scripts/verify_claims.sh` were corrected to match — the claim
   verifier caught all four drifted `audit.py` line numbers and both file counts,
   which is what it is for, and caught seven more after the observation work.
