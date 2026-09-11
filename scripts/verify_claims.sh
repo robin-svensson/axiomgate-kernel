@@ -721,6 +721,15 @@ echo "== 11. The name and the packaging =="
 check_eq "the distribution name" "1" \
   "$(grep -c '^name = "axiomgate-kernel"$' pyproject.toml)"
 check_eq "the import package exists" "1" "$([ -f axiomgate_kernel/__init__.py ] && echo 1 || echo 0)"
+# The version is stated twice: in pyproject.toml, which is what gets built and
+# what PyPI records forever, and in README's status section, which is what a
+# reader believes. A tag is compared against the first and never against the
+# second, so only this check can catch the pair drifting apart.
+PKGVERSION="$(grep -oE '^version = "[^"]+"' pyproject.toml | grep -oE '[0-9][^"]*')"
+check_eq "README states the version pyproject builds" "$PKGVERSION" \
+  "$(grep -oE 'Version [0-9]+\.[0-9]+\.[0-9]+' README.md | head -1 | grep -oE '[0-9].*')"
+check_eq "the changelog has a section for that version" "1" \
+  "$(grep -c "^## \[$PKGVERSION\]" CHANGELOG.md)"
 # Three places name the Python versions this package supports: the trove
 # classifiers, the CI matrix and the release matrix. They are three copies of
 # one fact, so they drift -- and the direction that drifts silently is the
@@ -733,6 +742,14 @@ for WF in .github/workflows/ci.yml .github/workflows/release.yml; do
   check_eq "$WF runs every version the classifiers promise" "$PYVERS" \
     "$(grep -oE 'python-version: \[.*\]' "$WF" | head -1 | grep -oE '3\.[0-9]+' | sort -V | tr '\n' ' ')"
 done
+# Prose says the same thing a fourth and fifth time, as a range. RELEASING.md
+# told a releaser the workflow runs 3.10-3.13 the day after it started running
+# 3.14 -- harmless there, but it is the same rot that puts a stale number in
+# front of a reader who cannot check it.
+PYRANGE="$(echo "$PYVERS" | awk '{print $1 "\u2013" $NF}')"
+check_eq "every stated version range is the range that runs" "" \
+  "$(grep -rhoE 'Python 3\.[0-9]+.3\.[0-9]+' README.md docs/*.md RELEASING.md CHANGELOG.md \
+     | sed 's/^Python //' | sort -u | grep -v "^${PYRANGE}$" | tr '\n' ' ')"
 check_eq "packages.find points to it" "1" \
   "$(grep -c 'include = \["axiomgate_kernel\*"\]' pyproject.toml)"
 # The search runs over tracked files, not the working directory. README asks

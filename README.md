@@ -336,7 +336,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.9.0. The code is mature — 346 tests, mutation-tested protections — but
+Version 0.10.0. The code is mature — 346 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires

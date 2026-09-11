@@ -9,6 +9,10 @@ each such change is listed here.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.10.0] — 2026-09-11
+
 ### Added
 - `.github/workflows/ci.yml` — the suite on Python 3.10–3.14, `verify_claims.sh`,
   a clean-environment install, and a build that runs the suite against the built
@@ -129,9 +133,11 @@ each such change is listed here.
   audit trail is not addressable in-process; it can call `Mediator` directly.
 - The observation log proves **ordering within one process**, not integrity across a
   restart. Unlike `AuditLog` it has no MAC chain and is never written to disk.
-- **I5 stays `MODEL-ONLY`.** It relates enforcement to execution, execution here is
-  grant redemption at `grant.py:137`, and that is unlogged. Same single reason
-  I1/I4/I6 had: the kernel does the right thing and cannot show it.
+- **I5 is `PARTIAL`, not `ENFORCED`.** R5 gave it the log it lacked — `grant.py:222`
+  records a redemption, `grant.py:253` marks what `unconsume` took back — but the
+  execution log is opt-in, lives in memory without a MAC chain, and a rollback is
+  trusted because nothing inside the process can know better. This entry said
+  `MODEL-ONLY` until R5 landed in the same unreleased section that closed it.
 - A log truncated to **zero bytes** is indistinguishable from a first run, so the
   `NEW_LOG` path accepts it. Deliberate: a created-but-unwritten file is what a
   crashed first run leaves behind. Detecting a total wipe needs the external

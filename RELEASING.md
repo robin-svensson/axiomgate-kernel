@@ -73,7 +73,7 @@ normalises versions — `0.3.0rc1`, never `0.3.0-rc1`. So a pre-release is tagge
 `v0.3.0rc1`. A hyphen there fails the check rather than publishing the wrong
 thing, which is the right outcome, but it fails after the tag is already pushed.
 
-The workflow runs the suite on Python 3.10–3.13, runs `scripts/verify_claims.sh`
+The workflow runs the suite on Python 3.10–3.14, runs `scripts/verify_claims.sh`
 so no documented number ships stale, builds, runs `twine check --strict`,
 refuses to continue if the tag disagrees with the built version, runs the suite
 against the built wheel from a directory where the source tree cannot shadow it,
