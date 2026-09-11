@@ -9,7 +9,14 @@ each such change is listed here.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- Threaded grant tests for competing consumers and for redemption/rollback
+  contention during execution bookkeeping. The existing implementation passes;
+  this closes a test coverage gap, not a demonstrated production defect.
+- `scripts/mutate_grant_concurrency.py`, run by `verify_claims.sh`, removes each
+  of the five `ReservedGrantStore` method locks in an isolated copy and
+  requires the full suite to reject it at the scheduled interleavings. Invariant
+  grades are unchanged.
 
 ## [0.10.0] — 2026-09-11
 

@@ -64,7 +64,7 @@ them — `strictness_report` and `strict_mediator`, R3.
 git clone https://github.com/robin-svensson/axiomgate-kernel.git
 cd axiomgate-kernel
 pip install -e ".[dev]"
-pytest -q                       # 346 tests
+pytest -q                       # 352 tests
 python examples/01_permit.py    # a request that is allowed
 python examples/02_deny.py      # three that are refused, three different ways
 python examples/03_audit_trail.py   # tampering with the log, and being caught
@@ -78,7 +78,7 @@ from axiomgate_kernel import Mediator, AuditLog, Verdict
 ```
 
 One runtime dependency (`cryptography`) and one for development (`pytest`). The
-suite runs in a fresh virtual environment containing nothing else — 346 passed,
+suite runs in a fresh virtual environment containing nothing else — 352 passed,
 with no `PYTHONPATH` and no editable install of anything but this package — so a
 green suite here is not an artefact of a pre-populated environment. Reproduce it
 with `bash scripts/verify_clean_install.sh`, which builds the empty environment,
@@ -336,7 +336,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.10.0. The code is mature — 346 tests, mutation-tested protections — but
+Version 0.10.0. The code is mature — 352 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires

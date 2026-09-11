@@ -629,7 +629,7 @@ check_eq "ROADMAP's count for test_execution.py is the collected one" \
 
 echo "== 7. Code volume (README figures) =="
 check_eq "core files (.py)" "28" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "22" "$(find tests  -name '*.py' | wc -l)"
+check_eq "test files"       "23" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that
@@ -985,6 +985,34 @@ check_eq "every exit code the review can produce is in the AGENTS.md table" "" \
   "${UNDOCUMENTED# }"
 check_eq "every exit code the AGENTS.md table documents can be produced" "" \
   "${UNREACHABLE# }"
+
+echo "== Grant concurrency: mutations fail and scratch stays outside the repository =="
+GRANT_ROOT_PROBE="$(mktemp -d -t axiomgate-grant-root-XXXXXX)"
+for item in axiomgate_kernel tests scripts examples pyproject.toml; do
+  cp -a "$item" "$GRANT_ROOT_PROBE/"
+done
+cp scripts/mutate_grant_concurrency.py "$GRANT_ROOT_PROBE/scripts/"
+GRANT_ROOT_BEFORE="$(find "$GRANT_ROOT_PROBE" -type f -printf '%P\n' | sort)"
+if GRANT_MUT="$(PYTHONDONTWRITEBYTECODE=1 "$PY" \
+    "$GRANT_ROOT_PROBE/scripts/mutate_grant_concurrency.py" 2>&1)"; then
+  GRANT_ROOT_STATUS=0
+else
+  GRANT_ROOT_STATUS=$?
+fi
+GRANT_ROOT_AFTER="$(find "$GRANT_ROOT_PROBE" -type f -printf '%P\n' | sort)"
+GRANT_ROOT_NEW="$(comm -13 <(printf '%s\n' "$GRANT_ROOT_BEFORE") \
+  <(printf '%s\n' "$GRANT_ROOT_AFTER"))"
+if [ "$GRANT_ROOT_STATUS" -eq 0 ]; then
+  ok "grant concurrency: full-suite lock mutations rejected as declared"
+else
+  bad "grant concurrency mutations" "exit 0" "$GRANT_MUT"
+fi
+if [ -z "$GRANT_ROOT_NEW" ]; then
+  ok "grant concurrency: no new files under repository tree"
+else
+  bad "grant concurrency repository tree" "no new files" "$GRANT_ROOT_NEW"
+fi
+rm -rf "$GRANT_ROOT_PROBE"
 
 echo
 echo "-------- $PASS PASS / $FAIL FAIL --------"

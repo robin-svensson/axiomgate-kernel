@@ -99,6 +99,19 @@ was mutation-tested on 2026-09-09. It needs no invariant number.
 
 ---
 
+## Grant concurrency evidence
+
+`tests/test_grant_concurrency.py` exercises competing consumers on a shared
+store and forces consumption/rollback contention during execution bookkeeping
+in either order. The existing implementation passes. `verify_claims.sh` runs
+`scripts/mutate_grant_concurrency.py`, which removes each of the five
+`ReservedGrantStore` method locks in a disposable copy and requires the full
+suite to fail at the scheduled
+interleavings. This adds executable evidence for the grant critical sections;
+it is not exhaustive scheduling, a cross-store guarantee, or a proof of the
+surrounding mediator/audit transaction. I10's grade is unchanged; I5 remains
+PARTIAL with the limitations above.
+
 ## What would close the gap
 
 All three logs now exist — two as of R4, the third with R5. `observation.py` is the `obsLog`, the audit chain is the

@@ -220,6 +220,12 @@ re-compared (it is the thing the owner just ruled on), and neither are
 reissues the capability. Eight bindings remain, and `Mediator.reenter` re-runs the
 capability check against the live registry regardless. A grant cannot be replayed.
 
+Consumption is once between explicit rollbacks: `unconsume`
+restores availability after downstream audit failure. Thread tests exercise
+competing consumers and contention between consumption and rollback, including
+execution bookkeeping, within a shared store. They do not establish a transaction
+across the surrounding mediator/audit calls or across separate store instances.
+
 `ReasonClass` records *why* the escalation happened — five classes:
 `owner_mandatory_action`, `owner_mandatory_risk`, `policy`, `provenance`, `other`.
 
