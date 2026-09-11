@@ -187,7 +187,8 @@ class GateWiringTests(unittest.TestCase):
         timeout = self.root / "bin/timeout"
         timeout.write_text("#!/bin/sh\necho UNEXPECTED_TIMEOUT >&2; exit 99\n")
         timeout.chmod(0o755)
-        self.env = {**os.environ, "PATH": str(self.root / "bin") + ":/usr/bin:/bin",
+        self.env = {**os.environ, "HOME": os.environ.get("HOME", str(self.root / "home")),
+                    "PATH": str(self.root / "bin") + ":/usr/bin:/bin",
                     "L6_AUTHOR_VENDOR": "openai", "AXIOMGATE_KERNEL_PYTHON": "/usr/bin/true",
                     "AXIOMGATE_SCRATCH": str(self.root / "scratch")}
         for key in ("CI", "AGY_BIN", "GEMINI_CLI_BIN", "JENKINS_URL", "L6_ALLOW_SELF_REVIEW"):

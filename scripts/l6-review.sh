@@ -37,6 +37,7 @@
 # is turn count.
 
 set -uo pipefail
+HOME="${HOME:-/nonexistent}"
 cd "$(dirname "$0")/.."
 
 REF="${1:-}"
@@ -535,5 +536,4 @@ echo "reviewer: $USED"
 # 4 is separate from both 0 and 1 on purpose: whether a major stops a change is
 # the caller's policy, and folding it into either answer decides it for them.
 exit $RC
-
 
