@@ -9,6 +9,10 @@ each such change is listed here.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.11.0] — 2026-09-12
+
 ### Added
 - Threaded grant tests for competing consumers and for redemption/rollback
   contention during execution bookkeeping. The existing implementation passes;

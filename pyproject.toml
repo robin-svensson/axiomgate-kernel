@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "axiomgate-kernel"
-version = "0.10.0"
+version = "0.11.0"
 description = "AxiomGate Kernel — deterministic, fail-closed authorization and audit for AI agents"
 readme = "README.md"
 license = "PolyForm-Noncommercial-1.0.0"
