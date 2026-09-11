@@ -746,7 +746,13 @@ done
 # told a releaser the workflow runs 3.10-3.13 the day after it started running
 # 3.14 -- harmless there, but it is the same rot that puts a stale number in
 # front of a reader who cannot check it.
-PYRANGE="$(echo "$PYVERS" | awk '{print $1 "\u2013" $NF}')"
+# Built with shell parameter expansion and a literal en dash, not an awk
+# escape: "\u2013" is a gawk extension, and mawk -- which is what Ubuntu gives
+# a GitHub runner -- left it as the four characters. The check was green here
+# and red on CI, which is the same shape of bug as the SIGPIPE one: a check
+# whose answer depended on the machine it ran on.
+PYTRIM="${PYVERS% }"
+PYRANGE="${PYTRIM%% *}–${PYTRIM##* }"
 check_eq "every stated version range is the range that runs" "" \
   "$(grep -rhoE 'Python 3\.[0-9]+.3\.[0-9]+' README.md docs/*.md RELEASING.md CHANGELOG.md \
      | sed 's/^Python //' | sort -u | grep -v "^${PYRANGE}$" | tr '\n' ' ')"
