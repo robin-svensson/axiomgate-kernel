@@ -931,6 +931,61 @@ check_eq "no field is masked in that flow" "masked=0" \
 check_eq "README: same field count as the real run" "1" \
   "$(grep -c 'of the 22 fields written in a real decision flow' README.md)"
 
+echo "== 8. The review script's exit codes are documented where agents read =="
+# AGENTS.md tells an agent what each exit code means, and that table is a claim
+# about a script that lives in another file. The failure this catches is not
+# hypothetical: a new exit code added to l6-review.sh, with the table left
+# saying what the old set meant, would have CI reading a documented contract
+# that no longer holds -- and this repository's whole subject is claims nobody
+# rechecked.
+# Both files, because l6-review.sh ends in `exit $RC` and the codes behind that
+# $RC are the return values of l6_verdict.py. Reading only the literal `exit N`
+# lines found 2, 3 and 5 and silently missed 0, 1 and 4 -- a check that reports
+# it ran while seeing half the subject, which is the failure class this file
+# exists to catch.
+# The Python half is read with an AST, not a regex. The regex version missed
+# `return 4 if findings else 0` -- the 0 is not at the start of a return line --
+# and a check that cannot see a value cannot say it is documented.
+VERDICT_CODES="$("$PY" - <<'PYEOF'
+import ast
+tree = ast.parse(open("scripts/l6_verdict.py", encoding="utf-8").read())
+# Only main(): every other function's return value is a value, not an exit
+# code, and walking the whole module would read a helper's `return 99` as a
+# process exit. bool is excluded explicitly because isinstance(True, int) is
+# True in Python, so `return True` would have been collected as the code 1.
+main = next(n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "main")
+codes = {
+    node.value
+    for n in ast.walk(main)
+    if isinstance(n, ast.Return) and n.value is not None
+    for node in ast.walk(n.value)
+    if isinstance(node, ast.Constant)
+    and isinstance(node.value, int) and not isinstance(node.value, bool)
+}
+print(" ".join(str(c) for c in sorted(codes)))
+PYEOF
+)"
+CODES_IN_SCRIPT="$( { grep -vE '^[[:space:]]*#' scripts/l6-review.sh | grep -oE '\bexit [0-9]+'
+                      printf '%s\n' $VERDICT_CODES
+                    } | grep -oE '[0-9]+' | sort -u | tr '\n' ' ')"
+CODES_IN_DOC="$(grep -oE '^\| `[0-9]+` \|' AGENTS.md \
+  | grep -oE '[0-9]+' | sort -u | tr '\n' ' ')"
+# Both directions. One-way inclusion passes a table that documents a code
+# nothing can produce, which teaches a reader a contract the script does not have.
+UNDOCUMENTED=""
+for c in $CODES_IN_SCRIPT; do
+  case " $CODES_IN_DOC " in *" $c "*) ;; *) UNDOCUMENTED="$UNDOCUMENTED $c" ;; esac
+done
+UNREACHABLE=""
+for c in $CODES_IN_DOC; do
+  case " $CODES_IN_SCRIPT " in *" $c "*) ;; *) UNREACHABLE="$UNREACHABLE $c" ;; esac
+done
+check_eq "every exit code the review can produce is in the AGENTS.md table" "" \
+  "${UNDOCUMENTED# }"
+check_eq "every exit code the AGENTS.md table documents can be produced" "" \
+  "${UNREACHABLE# }"
+
 echo
 echo "-------- $PASS PASS / $FAIL FAIL --------"
 [ "$FAIL" -eq 0 ] || exit 1
