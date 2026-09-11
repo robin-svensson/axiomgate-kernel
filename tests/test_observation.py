@@ -41,6 +41,7 @@ from axiomgate_kernel import (  # noqa: E402
     generate_key,
 )
 from axiomgate_kernel.observation import (  # noqa: E402
+    HOLDS,
     ObservationError,
     ObservationLog,
     check_invariants,
@@ -223,3 +224,49 @@ def test_the_returned_entries_are_a_copy():
     obs.record("agent-a", "req-1", "hash-1")
     obs.entries().clear()
     assert len(obs.entries()) == 1
+
+
+# --- the binding between the two logs ---------------------------------------
+#
+# L6 review 2026-09-11. Everything below describes one finding: the audit record
+# was joined to its observation by *looking the observation up again* by
+# request_id, after the fact. The observation is taken at a known point and its
+# sequence number is known right there, so looking it up a second time can only
+# introduce disagreement -- and it did.
+
+def test_an_observed_permit_carries_its_observation_even_without_a_request_id():
+    """`request_id` is optional in the schema, so a legitimately signed request
+    can omit it. The observation is still taken -- an identity exists -- but
+    the lookup keyed on request_id returned None for it, the audit record was
+    written with observation_seq=None, and check_invariants reported I1
+    VIOLATED with 'none of the audit entries has an observation'.
+
+    That sentence was false: the request was observed. An operator reading it
+    would conclude the observation log was not working at all. The documented
+    reason for a None observation_seq -- denied before an identity existed --
+    did not apply here: the verdict is PERMIT."""
+    mediator, obs, audit, agent_key, _ = observed()
+    decision = mediator.evaluate(request(agent_key, request_id=None,
+                                    action_type="INSPECT", domain="code",
+                                    risk_level="LOW", payload={}))
+
+    assert decision.verdict is Verdict.PERMIT
+    assert len(obs.entries()) == 1
+    assert audit.entries()[-1]["observation_seq"] == 1
+
+    report = check_invariants(obs, audit.entries())
+    assert report["I1"]["status"] == HOLDS
+
+
+def test_two_requests_sharing_a_request_id_each_keep_their_own_observation():
+    """The same after-the-fact lookup made the join depend on request_id being
+    unique, which nothing enforces. Each enforcement must cite the observation
+    taken for *it*, not the most recent one that happens to share an id."""
+    mediator, obs, audit, agent_key, _ = observed()
+    for _ in range(2):
+        mediator.evaluate(request(agent_key, request_id="same-id",
+                             action_type="INSPECT", domain="code",
+                             risk_level="LOW", payload={}))
+
+    seqs = [e["observation_seq"] for e in audit.entries()]
+    assert seqs == [1, 2]

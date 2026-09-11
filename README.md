@@ -64,7 +64,7 @@ them — `strictness_report` and `strict_mediator`, R3.
 git clone https://github.com/robin-svensson/axiomgate-kernel.git
 cd axiomgate-kernel
 pip install -e ".[dev]"
-pytest -q                       # 326 tests
+pytest -q                       # 343 tests
 python examples/01_permit.py    # a request that is allowed
 python examples/02_deny.py      # three that are refused, three different ways
 python examples/03_audit_trail.py   # tampering with the log, and being caught
@@ -225,9 +225,37 @@ The three invariants are now `PARTIAL`, not `ENFORCED`, and the difference is re
 the log is opt-in, it lives in memory without a MAC chain, and `_observe` swallows its
 own exceptions on purpose — evidence about a run must not turn a legitimate PERMIT
 into a DENY. When it fails, the enforcement counts as unobserved and I1 drops to
-`PARTIAL`. The report gets worse, which is what should happen. **I5 stays
-`MODEL-ONLY`**: it needs a third log for execution, and grant redemption is unlogged.
+`PARTIAL`. The report gets worse, which is what should happen.
 See [docs/ROADMAP.md](docs/ROADMAP.md) R4.
+
+### The fourth: what a rollback does to an execution log
+
+I5 — every execution has a matching observation — was `MODEL-ONLY` for the same single
+reason, one log short. Execution here is the redemption of a reserved grant, and that
+redemption wrote nothing. The `consumed` flag on the grant was not a substitute, and
+`unconsume` is why: a redemption is rolled back when downstream audit logging fails, and a
+log that only appended would keep reporting an execution the kernel deliberately took back.
+
+```python
+from axiomgate_kernel import ExecutionLog, check_execution_invariant
+
+execs = ExecutionLog()
+mediator = Mediator(authenticator=…, registry=…, audit=audit, provenance=…,
+                    observations=obs, executions=execs)
+...
+report = check_execution_invariant(execs, obs)
+report["status"]   # HOLDS | PARTIAL | VIOLATED | UNOBSERVABLE
+```
+
+So the log marks rather than deletes, and the check reads three states: executed, rolled
+back, never happened. A rolled-back record needs no observation; a live one without a
+matching observation is `VIOLATED`. An **empty** execution log is `PARTIAL`, never `HOLDS` —
+nothing has been contradicted, and a green answer over an empty set is the vacuous truth the
+four states exist to refuse.
+
+I5 is now `PARTIAL`. The limit worth naming: the check trusts the rollback marker, because
+nothing inside the process can outrank the code that set it.
+See [docs/ROADMAP.md](docs/ROADMAP.md) R5.
 
 ---
 
@@ -298,7 +326,7 @@ None of them ships a model-checked governance specification.
 |---|---|
 | [docs/API.md](docs/API.md) | Public API, extracted from the running package |
 | [docs/TRACEABILITY.md](docs/TRACEABILITY.md) | TLA+ ↔ Python, per invariant, with honest status |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Declared debt: R1–R3 closed, R4 partial, each with the deviation that keeps its protection opt-in written out |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Declared debt: R1–R3 closed, R4 and R5 partial, each with the deviation that keeps its protection opt-in written out |
 | [docs/REGULATORY.md](docs/REGULATORY.md) | The AI Act articles quoted verbatim, with dates, sources, and what could not be verified |
 | [docs/ANCHORING.md](docs/ANCHORING.md) | Integration note: how to anchor the audit chain, at what cadence, and what an anchor still cannot prove |
 | `examples/` | Three runnable examples: permit, refuse, trace |
@@ -307,7 +335,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.9.0. The code is mature — 326 tests, mutation-tested protections — but
+Version 0.9.0. The code is mature — 343 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires

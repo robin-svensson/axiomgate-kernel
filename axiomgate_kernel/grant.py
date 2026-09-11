@@ -11,6 +11,7 @@ from uuid import uuid4
 import threading
 
 from .domain import ActionType, RiskLevel
+from .execution import ExecutionLog
 
 
 class ReasonClass(Enum):
@@ -59,11 +60,22 @@ def _now() -> datetime:
 class ReservedGrantStore:
     """Thread-safe reserved grant store."""
 
-    def __init__(self, ttl: Optional[timedelta] = None) -> None:
+    def __init__(self, ttl: Optional[timedelta] = None,
+                 executions: Optional["ExecutionLog"] = None) -> None:
         self._items: Dict[str, ReservedGrant] = {}
         self._by_escalation: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._ttl = ttl or timedelta(hours=1)
+        # I5. Redeeming a grant is what "execution" means in this kernel, and
+        # nothing recorded that it happened -- so "every execution has a
+        # matching observation" was a statement about the model only. Opt-in
+        # like the other protections; see docs/ROADMAP.md R5. The consumed flag
+        # is not a substitute, because unconsume() puts it back.
+        self._executions = executions
+        # Redemption -> execution record seq, so a rollback can find the record
+        # it has to mark. Keyed on grant id: escalation ids are reused across a
+        # reserve/consume/unconsume cycle, grant ids are not.
+        self._exec_seq: Dict[str, int] = {}
 
     def create_pending_context(
         self,
@@ -202,6 +214,24 @@ class ReservedGrantStore:
                     raise GrantError(f"grant binding mismatch: {name}")
             consumed = ReservedGrant(**{**grant.__dict__, "consumed": True})
             self._items[gid] = consumed
+            # After every binding check, not before: a GrantError above means
+            # nothing executed, and recording the attempt would make the log
+            # answer "yes" to "did this run?" for every correctly refused call.
+            if self._executions is not None:
+                try:
+                    rec = self._executions.record(
+                        request_id=consumed.request_id,
+                        principal_id=consumed.principal_id,
+                        escalation_id=consumed.escalation_id,
+                    )
+                    self._exec_seq[gid] = rec.seq
+                except Exception:
+                    # Same trade as Mediator._observe: this is evidence about
+                    # the run, not part of the decision. A bookkeeping failure
+                    # must not undo an owner-approved redemption. The cost is
+                    # paid in the report -- the execution goes unrecorded and
+                    # I5 cannot come back HOLDS for it.
+                    pass
             return consumed
 
     def unconsume(self, escalation_id: str) -> None:
@@ -213,6 +243,16 @@ class ReservedGrantStore:
                 if grant.consumed:
                     restored = ReservedGrant(**{**grant.__dict__, "consumed": False})
                     self._items[gid] = restored
+                    # Marked, never deleted. Deleting would lose that the
+                    # redemption was ever attempted, which is the thing an
+                    # auditor most wants to see; leaving it unmarked would
+                    # carry an execution that did not happen.
+                    seq = self._exec_seq.pop(gid, None)
+                    if self._executions is not None and seq is not None:
+                        try:
+                            self._executions.mark_rolled_back(seq)
+                        except Exception:
+                            pass
 
 
 def scope_hash(capability) -> str:

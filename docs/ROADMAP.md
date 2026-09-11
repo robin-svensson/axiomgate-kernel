@@ -250,16 +250,16 @@ text*, provable only by reading it — and an invariant that holds by inspection
 enforced, it is true until somebody edits the file. Nothing in the suite would have
 noticed the edit.
 
-**What was built** (`axiomgate_kernel/observation.py`, 10 tests in `tests/test_observation.py`,
+**What was built** (`axiomgate_kernel/observation.py`, 12 tests in `tests/test_observation.py`,
 14 mechanical checks in `scripts/verify_claims.sh` §6c):
 
 1. **`ObservationLog`** — append-only. `entries()` returns a copy, records refuse
    `__setattr__`, and `seq` starts at **1**, because `if seq:` on a legitimate zero reads
    as absence.
 2. **`Mediator(observations=…)`** — opt-in, like R1 and R2. The observation is taken at
-   `mediator.py:153`: after authentication succeeded, before `then(canon, authn)`
+   `mediator.py:169`: after authentication succeeded, before `then(canon, authn)`
    dispatches anything. One site, not several.
-3. **`observation_seq`** in every audit record (`mediator.py:734`) — the join between the
+3. **`observation_seq`** in every audit record (`mediator.py:757`) — the join between the
    two logs. `None` when there is no observation log, and `None` when the request was
    denied before an identity existed. A missing value is not zero.
 4. **`check_invariants(observations, audit_entries)`** (`observation.py:143`) — answers
@@ -276,14 +276,57 @@ a dangling reference is a contradiction, not incomplete data.
 
 - The log is **opt-in**. A `Mediator` built without `observations=` enforces exactly as
   before and answers `UNOBSERVABLE`. The default kernel is not observed.
-- `_observe` **swallows its exceptions on purpose** (`mediator.py:161`). The observation
+- `_observe` **swallows its exceptions on purpose** (`mediator.py:203`). The observation
   is evidence about the run, not part of the decision; a bookkeeping error must not turn
   a legitimate PERMIT into a DENY. The cost is paid honestly — the enforcement is counted
   as unobserved and I1 drops to PARTIAL. The report gets worse, which is correct.
 - The log lives **in memory and is not authenticated**. Unlike `AuditLog` there is no MAC
   chain: it proves ordering within one process, not integrity across a restart.
 
-**What stays open: I5, and it needs a third log.** I5 relates `enforceLog` to `execLog` —
-enforcement before execution. Execution here is grant redemption at `grant.py:137`, and it
-is unlogged. Until an `execLog` exists, I5 stays MODEL-ONLY for the same single reason
-I1/I4/I6 were: the kernel does the right thing and cannot show it.
+**What stayed open: I5, and it needed a third log.** That log was written the same night;
+see **R5** below.
+
+---
+
+## R5 — the execution log, and what a rollback does to it
+
+**Status: PARTIAL 2026-09-11.** I5 says every execution has a matching observation. It was
+`MODEL-ONLY` for the same single reason I1, I4 and I6 carried until R4: the invariant
+relates two logs and the kernel kept only one of them. Execution in this kernel is the
+redemption of a `ReservedGrant` — `ReservedGrantStore.consume_if_valid` is the only way to
+redeem one — and that redemption wrote nothing anywhere.
+
+**`consumed` was not a substitute, and `unconsume` is why.** A redemption is rolled back
+when downstream audit logging fails, and the flag goes back to `False`. A log that appended
+on consume and stopped there would carry an execution that never happened, and would keep
+carrying it after the rollback. That is worse than no log: it reports an execution the
+kernel deliberately undid. Deleting the entry instead would lose that it was attempted.
+
+**What was built** (`axiomgate_kernel/execution.py`, 13 tests in `tests/test_execution.py`):
+
+1. **`ExecutionLog`** — append-only, three states rather than two: executed, rolled back,
+   never happened. `entries()` returns a copy, records refuse `__setattr__`, and `seq`
+   starts at **1**, for the same reason it does in `ObservationLog`.
+2. **`mark_rolled_back(seq)`** (`execution.py:92`) — marks, never deletes, and raises on a
+   sequence number that was never issued. Called from `grant.py:253` inside `unconsume`.
+3. **The record is written after every binding check passes** (`grant.py:222`), not at
+   entry: a redemption refused for a principal mismatch is not an execution.
+4. **`check_execution_invariant(executions, observations)`** (`execution.py:123`) — the same
+   four states as R4. A rolled-back record needs no observation; a live one without a
+   matching observation is `VIOLATED`.
+
+**An empty execution log is `PARTIAL`, not `HOLDS`.** Nothing has been executed, so nothing
+has been contradicted — but a green answer over an empty set is exactly the vacuous truth
+R4 was written to refuse.
+
+**Why PARTIAL and not ENFORCED.** The same three deviations as R4, plus one of its own:
+
+- The log is **opt-in**: `Mediator(executions=ExecutionLog())`, passed straight through to
+  the grant store. A kernel without one reports `UNOBSERVABLE`.
+- The recording **swallows its exceptions** (`grant.py:222`), on the same trade as
+  `Mediator._observe`: bookkeeping about a redemption must not undo a redemption the policy
+  allowed.
+- The log lives **in memory and is not authenticated**. No MAC chain, unlike `AuditLog`.
+- **A rollback is trusted.** The check believes `rolled_back` because nothing else can know;
+  a caller who marks a real execution as rolled back gets a clean report. That is the same
+  boundary R3 states for `AuditLog.anchored`, and it is documented rather than defended.

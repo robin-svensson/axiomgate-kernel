@@ -39,11 +39,31 @@ each such change is listed here.
 - `observation_seq` in every audit record, joining an enforcement to the observation
   that preceded it. `None` when there is no observation log and when the request was
   denied before an identity existed. The audit record now has 22 fields, was 21.
-- `tests/test_observation.py` (10 tests) and §6c of `scripts/verify_claims.sh`
+- `tests/test_observation.py` (12 tests) and §6c of `scripts/verify_claims.sh`
   (14 checks that run a real `Mediator` against real signed requests).
 - A check that the `check_invariants` call shown in README.md is the call the
   function actually accepts. The first draft of that example passed `obs.entries()`
   where the log belongs; README code is code nobody runs.
+
+- `axiomgate_kernel/execution.py` — `ExecutionLog`, `ExecutionRecord`,
+  `ExecutionError` and `check_execution_invariant`. I5 — every execution has a
+  matching observation — was `MODEL-ONLY` for the same single reason as I1, I4 and
+  I6: the invariant relates two logs and the kernel kept one. Execution here is the
+  redemption of a `ReservedGrant`, and that redemption wrote nothing. The `consumed`
+  flag was not a substitute, and `unconsume` is why: a redemption is rolled back when
+  downstream audit logging fails, so a log that only appended would keep reporting an
+  execution the kernel deliberately took back. The log marks rather than deletes, and
+  the check reads three states — executed, rolled back, never happened. An empty
+  execution log is `PARTIAL`, never `HOLDS`. See [docs/ROADMAP.md](docs/ROADMAP.md) R5.
+- `Mediator(executions=…)` and `ReservedGrantStore(executions=…)` — opt-in, passed
+  straight through: the store is what redeems a grant. The record is written after
+  every binding check has passed, not on entry, because a redemption refused for a
+  principal mismatch is not an execution.
+- `tests/test_execution.py` (13 tests), the last of which runs the only path that
+  reaches an execution — `evaluate` → `decide_escalation` → `reenter` → redemption —
+  through a real `Mediator`. The unit tests above it build both logs by hand, which
+  proves the check and not the wiring: without the end-to-end test the kernel could
+  pass every one of them and never call `ExecutionLog.record`.
 
 - `axiomgate_kernel/strict.py` — `strict_audit_log`, `strict_mediator`,
   `strictness_report` and the `NEW_LOG` sentinel. The two fail-closed protections
@@ -72,11 +92,11 @@ each such change is listed here.
   and a skip reads as green — so `tests/test_no_embedded_identity.py`, pointed at
   a tree without the source directory, examined nothing at all and still passed.
   Anything with nothing left to check now fails at collection instead.
-- The suite is 326 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
+- The suite is 343 tests, up from 299. `README.md`, `docs/TRACEABILITY.md` and the
   line anchors in `scripts/verify_claims.sh` were corrected to match — the claim
   verifier caught all four drifted `audit.py` line numbers and both file counts,
   which is what it is for, and caught seven more after the observation work.
-- `docs/TRACEABILITY.md`: I1, I4 and I6 moved from `MODEL-ONLY` to `PARTIAL`, each
+- `docs/TRACEABILITY.md`: I1, I4, I5 and I6 moved from `MODEL-ONLY` to `PARTIAL`, each
   with the file and line that carries it. Not `ENFORCED` — the observation log is
   opt-in, lives in memory without a MAC chain, and records on a best-effort basis.
   Claiming `ENFORCED` would put the document back in the practice it exists to correct.

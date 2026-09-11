@@ -37,8 +37,13 @@ roadmap_section() {
 }
 # has <name> <expected 0|1> <text> <section-prefix> -- does the text exist in the section
 has_in_section() {
+  # Not a pipe into grep -q. With `set -o pipefail`, grep exiting early on its
+  # first match kills awk with SIGPIPE and the pipeline reports 141, so the
+  # assignment was skipped for exactly the sections long enough that grep
+  # finished first. The check went red on a document it had just confirmed.
   local got; got=0
-  roadmap_section "$4" | grep -qF "$3" && got=1
+  local body; body="$(roadmap_section "$4")"
+  case "$body" in *"$3"*) got=1;; esac
   check_eq "$1" "$2" "$got"
 }
 
@@ -50,8 +55,13 @@ anchor() {
 }
 
 echo "== 1. Test suite =="
+# The expected count is read out of README.md rather than written here. Twice now a
+# number in prose drifted from the run while a second copy of it in this script stayed
+# green, which makes the check agree with itself instead of with the repository.
+SUITE_CLAIMED="$(grep -oE '# [0-9]+ tests' README.md | head -1 | grep -oE '[0-9]+')"
 T="$("$PY" -m pytest tests -q 2>&1 | tail -1)"
-check_eq "whole suite green" "326 passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
+check_eq "whole suite green, at the count README states" "$SUITE_CLAIMED passed" "$(echo "$T" | grep -oE '^[0-9]+ passed')"
+check_eq "README's two suite counts agree with each other" "$SUITE_CLAIMED" "$(grep -oE 'mature — [0-9]+ tests' README.md | grep -oE '[0-9]+')"
 
 echo "== 2. Standalone: no dependency on the old src package =="
 LEAK="$(grep -rn 'src\.kernel\|from src\b\|"src\.' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -64,7 +74,7 @@ class B:
 sys.meta_path.insert(0,B())
 import pytest; sys.exit(pytest.main(['tests','-q','--tb=no']))
 " 2>&1 | tail -1 | grep -oE '^[0-9]+ passed')"
-check_eq "green even with src blocked" "326 passed" "$ISO"
+check_eq "green even with src blocked" "$SUITE_CLAIMED passed" "$ISO"
 
 echo "== 3. No false formal traceability =="
 INV="$(grep -rn 'I-[0-9]' axiomgate_kernel/ tests/ 2>/dev/null | wc -l)"
@@ -81,10 +91,10 @@ anchor "I2  check_capability"        axiomgate_kernel/authorization.py   91 'def
 anchor "I3  seal()"                  axiomgate_kernel/capability.py     167 'def seal'
 anchor "I7  producer != verifier" axiomgate_kernel/evidence.py      174 'producer cannot verify own evidence'
 anchor "I7  producer != authority" axiomgate_kernel/evidence.py       229 'producer cannot be final authority'
-anchor "I8  policy_hash in grant"     axiomgate_kernel/grant.py           45 'policy_hash'
+anchor "I8  policy_hash in grant"     axiomgate_kernel/grant.py           46 'policy_hash'
 anchor "I9  authenticate"            axiomgate_kernel/authentication.py 179 'def authenticate'
 anchor "I9  constant-time comparison"  axiomgate_kernel/authentication.py 200 'hmac_equal'
-anchor "I10 consume_if_valid"        axiomgate_kernel/grant.py          137 'def consume_if_valid'
+anchor "I10 consume_if_valid"        axiomgate_kernel/grant.py          149 'def consume_if_valid'
 anchor "audit append"                axiomgate_kernel/audit.py          139 'def append'
 anchor "audit verify_chain"          axiomgate_kernel/audit.py          223 'def verify_chain'
 anchor "audit verify_prefix"         axiomgate_kernel/audit.py          237 'def verify_prefix'
@@ -92,9 +102,12 @@ anchor "audit _verify_links"         axiomgate_kernel/audit.py          361 'def
 anchor "COMMIT is Owner-only"        axiomgate_kernel/domain.py          15 'OWNER_MANDATORY_ACTIONS = frozenset'
 anchor "COMMIT gate (single point)" axiomgate_kernel/authorization.py 158 'OWNER_MANDATORY_ACTIONS'
 anchor "Verdict"                     axiomgate_kernel/domain.py          79 'class Verdict'
-anchor "I1  observe after authn"     axiomgate_kernel/mediator.py       153 'self\._observe\(canon, authn\.principal\)'
-anchor "I4  observation_seq in audit" axiomgate_kernel/mediator.py      734 '"observation_seq": self\._observation_seq'
+anchor "I1  observe after authn"     axiomgate_kernel/mediator.py       169 'self\._observe\(canon, authn\.principal\)'
+anchor "I4  observation_seq in audit" axiomgate_kernel/mediator.py      757 '"observation_seq": self\._observation_seq'
 anchor "I1/I4/I6 check_invariants"   axiomgate_kernel/observation.py    143 'def check_invariants'
+anchor "I5  execution recorded"      axiomgate_kernel/grant.py          222 'rec = self\._executions\.record\('
+anchor "I5  rollback marked"         axiomgate_kernel/grant.py          253 'self\._executions\.mark_rolled_back\(seq\)'
+anchor "I5  check_execution_invariant" axiomgate_kernel/execution.py    123 'def check_execution_invariant'
 
 # The anchors above are checked against the CODE. Review finding 2026-09-10:
 # the numbers stated in TRACEABILITY.md were a second, disconnected set --
@@ -611,10 +624,12 @@ check_eq "ROADMAP's count for test_observation.py is the collected one" \
   "$(collected tests/test_observation.py)" "$(claimed tests/test_observation.py)"
 check_eq "ROADMAP's count for test_strict.py is the collected one" \
   "$(collected tests/test_strict.py)" "$(claimed tests/test_strict.py)"
+check_eq "ROADMAP's count for test_execution.py is the collected one" \
+  "$(collected tests/test_execution.py)" "$(claimed tests/test_execution.py)"
 
 echo "== 7. Code volume (README figures) =="
-check_eq "core files (.py)" "27" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "21" "$(find tests  -name '*.py' | wc -l)"
+check_eq "core files (.py)" "28" "$(find axiomgate_kernel -name '*.py' | wc -l)"
+check_eq "test files"       "22" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that

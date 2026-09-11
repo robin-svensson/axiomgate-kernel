@@ -30,6 +30,9 @@ from .audit import AuditLog, AuditError
 from .mediator import Mediator
 from .client import MediatorClient
 from .provisioning import ProvisioningToken, ProvisioningError
+from .execution import (
+    ExecutionError, ExecutionLog, ExecutionRecord, check_execution_invariant,
+)
 from .observation import (
     ObservationError, ObservationLog, ObservationRecord, check_invariants,
 )
@@ -80,5 +83,9 @@ __all__ = [
     # which ones a live kernel actually has. See docs/ROADMAP.md.
     "NEW_LOG", "StrictnessError", "strict_audit_log", "strict_mediator",
     "strictness_report",
-    "ObservationError", "ObservationLog", "ObservationRecord", "check_invariants",
+    "ObservationError", "ObservationLog", "ObservationRecord", "ExecutionError",
+    "ExecutionLog",
+    "ExecutionRecord",
+    "check_execution_invariant",
+    "check_invariants",
 ]

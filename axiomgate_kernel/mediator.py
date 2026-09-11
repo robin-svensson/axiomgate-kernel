@@ -3,6 +3,7 @@
 Sole authorization chokepoint. Does not execute actions.
 """
 
+import threading
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 from uuid import uuid4
@@ -21,6 +22,7 @@ from .policy import PolicySnapshot
 from .principal import Principal
 from .provenance import ProvenanceChecker, ProvenanceKind, ProvenanceResult
 from .grant import GrantError, ReasonClass, ReservedGrantStore, scope_hash
+from .execution import ExecutionLog
 from .observation import ObservationLog
 from .domain import (
     ActionType,
@@ -51,6 +53,7 @@ class Mediator:
         policy_token: Optional["ProvisioningToken"] = None,
         require_principal_context: bool = False,
         observations: Optional["ObservationLog"] = None,
+        executions: Optional["ExecutionLog"] = None,
     ) -> None:
         self._authn = authenticator
         self._registry = registry
@@ -72,9 +75,17 @@ class Mediator:
         # reported as UNOBSERVABLE rather than passing, which is the difference
         # between this and the two gaps R3 was written about.
         self._observations = observations
+        # The sequence number of the observation taken for the call in flight.
+        # Thread-local, not an instance attribute: two threads in evaluate() at
+        # once would otherwise write each other's number into each other's audit
+        # record, and the join between the two logs would be silently wrong.
+        self._in_flight = threading.local()
         self._escalations = EscalationStore()
         self._evidence = EvidenceJournal()
-        self._grants = ReservedGrantStore()
+        # I5. Passed straight through: the store is what redeems a grant, and
+        # redemption is what execution means here. See docs/ROADMAP.md R5.
+        self._grants = ReservedGrantStore(executions=executions)
+        self._executions = executions
         self._policy_sealed = False
         self._policy_bound_id = policy_token.token_id if policy_token is not None else None
         self._policy_token_ref = policy_token
@@ -126,6 +137,11 @@ class Mediator:
 
     def _gated(self, op: str, request, then) -> Decision:
         """Common gate: canonicalize -> authenticate -> dispatch."""
+        # Cleared first, not on the way out: every return below this line goes
+        # through _finish, and a carrier left holding the previous call's number
+        # would stamp a DENY reached before authentication with an observation
+        # that belongs to some earlier request.
+        self._in_flight.observation_seq = None
         if not self.available:
             dummy = _empty_canon()
             return self._finish(
@@ -150,7 +166,14 @@ class Mediator:
         # exists, before any decision is dispatched. Every DENY above this line
         # is an enforcement without an observation, and check_invariants counts
         # those rather than hiding them.
-        self._observe(canon, authn.principal)
+        seq = self._observe(canon, authn.principal)
+        # Carried rather than looked up again. The first version of this joined
+        # the audit record to its observation by searching the log for the
+        # request_id afterwards -- which made the join depend on request_id
+        # being both present and unique, and neither is enforced. A signed
+        # request with no request_id was observed and then reported as never
+        # observed. The number is known right here; nothing else needs to agree.
+        self._in_flight.observation_seq = seq
         try:
             return then(canon, authn)
         except Exception as exc:
@@ -158,7 +181,7 @@ class Mediator:
                 Verdict.DENY, f"fail-closed: {exc}", [f"{op}.error"], canon, authn.principal
             )
 
-    def _observe(self, canon: CanonicalRequest, principal: Principal) -> None:
+    def _observe(self, canon: CanonicalRequest, principal: Principal) -> Optional[int]:
         """Record that this identity was seen, before anything is decided.
 
         A failure here is swallowed deliberately, and it is the one place in
@@ -170,30 +193,30 @@ class Mediator:
         report gets worse, which is exactly what should happen.
         """
         if self._observations is None:
-            return
+            return None
         try:
-            self._observations.record(
+            return self._observations.record(
                 _safe_principal_id(principal),
                 canon.get("request_id"),
                 canon.full_payload_hash(),
-            )
+            ).seq
         except Exception:
-            pass
+            return None
 
-    def _observation_seq(self, canon: CanonicalRequest) -> Optional[int]:
-        """The sequence number of this request's observation, or None.
+    def _observation_seq(self) -> Optional[int]:
+        """The sequence number of the observation taken for the call in flight.
 
-        None is written when there is no observation log, and when the request
-        was denied before one could be taken. A missing value is not zero and
-        not "the first one" -- it is the absence of a value.
+        ``None`` when there is no observation log, when the request was denied
+        before an identity existed, and when recording failed. A missing value
+        is not zero and not "the first one" -- it is the absence of a value, and
+        check_invariants counts it as an unobserved enforcement.
+
+        Read off the carrier set in :meth:`_gated` rather than searched for in
+        the log. Searching required request_id to be present and unique; it is
+        optional in the schema and nothing enforces uniqueness, so an observed
+        request could be reported as never observed (L6 review 2026-09-11).
         """
-        if self._observations is None:
-            return None
-        try:
-            rec = self._observations.for_request(canon.get("request_id"))
-        except Exception:
-            return None
-        return rec.seq if rec is not None else None
+        return getattr(self._in_flight, "observation_seq", None)
 
     def _evaluate_authenticated(self, canon: CanonicalRequest, authn: AuthnResult) -> Decision:
         principal = authn.principal
@@ -731,7 +754,7 @@ class Mediator:
             # Binds this enforcement to the observation that preceded it. None
             # when the kernel has no observation log, or when the decision was
             # reached before an identity existed. See observation.py.
-            "observation_seq": self._observation_seq(canon),
+            "observation_seq": self._observation_seq(),
             # A missing value is not zero and not "no restriction" -- it is
             # the absence of a value, and is written as None.
             "provenance": frame.provenance if frame is not None else None,
