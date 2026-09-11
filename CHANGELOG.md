@@ -112,6 +112,14 @@ each such change is listed here.
   from memory. Six names were missing when the check was written; `Capability` was
   the seventh, named only through `make_capability`.
 - `README.md`: the clean-environment figure is 346 passed, was 299.
+- The `check_invariants` section of `docs/API.md` described the return shape of
+  `check_execution_invariant` — "status, holds, detail and the matched and unmatched
+  entries" — which is the other function's dict; `check_invariants` returns one verdict
+  per invariant, keyed `I1`, `I4`, `I6`, plus `holds`. An L6 review found it by running
+  the function. The signature check could not: the signatures were right and the prose
+  was wrong. `scripts/verify_claims.sh` now compares the documented return keys against
+  the keys the functions actually return, so a key named in one section that belongs
+  only to the other is a finding.
 
 ### Limits, stated rather than defended
 - `strictness_report` is **self-reporting, not verification**. `AuditLog.anchored`

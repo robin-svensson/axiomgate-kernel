@@ -854,6 +854,39 @@ PYEOF
 )"
 check_eq "every public name README mentions is documented in API.md" "" "$MISSING_API"
 
+# An L6 review found the API.md section for check_invariants describing the
+# return shape of check_execution_invariant -- "status, holds, detail and the
+# matched and unmatched entries" -- which is the other function's dict. The
+# signature check cannot see it: the signatures were right and the prose was
+# wrong. So the return keys are compared instead: a key named in one section
+# that belongs only to the other function is a finding. status, holds and
+# detail are excluded because both functions use them, at different levels.
+WRONG_KEYS="$("$PY" - <<'PYEOF'
+import re, sys
+sys.path.insert(0, ".")
+from axiomgate_kernel import (ExecutionLog, ObservationLog,
+                              check_execution_invariant, check_invariants)
+
+shapes = {
+    "ObservationLog": set(check_invariants(ObservationLog(), [])),
+    "ExecutionLog": set(check_execution_invariant(ExecutionLog(), ObservationLog())),
+}
+shared = {"status", "holds", "detail"}
+distinctive = (shapes["ObservationLog"] ^ shapes["ExecutionLog"]) - shared
+
+doc = open("docs/API.md", encoding="utf-8").read()
+sections = dict(re.findall(r"^## `(\w+)`\n(.*?)(?=^## )", doc, re.M | re.S))
+wrong = sorted(
+    f"{name}:{key}"
+    for name, body in sections.items() if name in shapes
+    for key in distinctive
+    if re.search(rf"`{re.escape(key)}`", body) and key not in shapes[name]
+)
+print(",".join(wrong))
+PYEOF
+)"
+check_eq "API.md attributes each return key to the function that has it" "" "$WRONG_KEYS"
+
 # The field count in README rotted once because nothing recomputed it.
 FIELDS="$("$PY" scripts/count_audit_fields.py 2>&1)"
 check_eq "the audit entry has 22 fields in a real run" "fields=22" \

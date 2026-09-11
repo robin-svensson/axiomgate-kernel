@@ -291,11 +291,20 @@ kept, and `for_request` reports the later one.
 check_invariants(observations, audit_entries)
 ```
 
-Returns `status`, `holds`, `detail` and the matched and unmatched entries. `status` is
-one of `HOLDS`, `PARTIAL`, `VIOLATED`, `UNOBSERVABLE` — four, not two, because a check
-that cannot say *I do not know* eventually says *yes* when it means it. An empty log is
-`PARTIAL`, never `HOLDS`: nothing was checked, and vacuous truth is the failure mode
-these four states exist to prevent.
+Returns a dict keyed `I1`, `I4`, `I6` — one verdict per invariant, each with a
+`status` and a `detail` — plus a top-level `holds` that is true only when all three
+are `HOLDS`. `status` is one of `HOLDS`, `PARTIAL`, `VIOLATED`, `UNOBSERVABLE`: four,
+not two, because a check that cannot say *I do not know* eventually says *yes* when it
+means it.
+
+The fourth is the one that matters. With no observation log, or with an audit chain
+that recorded no enforcement, every invariant is `UNOBSERVABLE` — nothing was checked,
+and vacuous truth is the failure mode these states exist to prevent. Enforcements with
+no observation behind them are `VIOLATED`, never a silent pass. `PARTIAL` is reserved
+for the enforcements the model's I1 does not range over — a request denied before an
+identity existed has no observation to have: they are counted and their rules named
+rather than excluded, because excluding them would raise the verdict by narrowing the
+question.
 
 ---
 
@@ -322,10 +331,12 @@ the same history as one where it never happened.
 check_execution_invariant(executions, observations)
 ```
 
-Every execution that stands must have an observation behind it. Same four statuses as
-above, and the same rule about vacuous truth, with one addition learnt from review: a
-log containing **nothing but rollbacks** is `PARTIAL`, not `HOLDS`. Zero confirmed
-executions is evidence of nothing whether the log is empty or merely busy.
+Every execution that stands must have an observation behind it. One verdict, not three:
+a flat dict of `status`, `holds`, `detail`, and the `matched`, `unmatched` and
+`rolled_back` entries behind it. The four statuses are the same as above, and so is the
+rule about vacuous truth, with one addition learnt from review: a log containing
+**nothing but rollbacks** is `PARTIAL`, not `HOLDS`. Zero confirmed executions is
+evidence of nothing whether the log is empty or merely busy.
 
 ---
 
