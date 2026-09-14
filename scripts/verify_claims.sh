@@ -836,13 +836,13 @@ check_eq "nothing left of the proprietary language" "0" \
 # that receives mail. GitHub's noreply addresses do not, and may therefore
 # only appear as attribution in pyproject -- never as a contact channel.
 check_eq "the LICENSE contact address is reachable" "1" \
-  "$(grep -c '^Contact: robinsvensson493@gmail.com$' LICENSE)"
+  "$(grep -c '^Contact: robin@axiomgate.org$' LICENSE)"
 check_eq "no noreply address as a contact channel" "0" \
   "$(grep -c 'Contact:.*noreply' LICENSE)"
 check_eq "README names the same license as LICENSE" "1" \
   "$(grep -c 'PolyForm Noncommercial License 1.0.0' README.md)"
 check_eq "README points to both contact channels" "2" \
-  "$(grep -cE 'open an issue|robinsvensson493@gmail.com' README.md)"
+  "$(grep -cE 'open an issue|robin@axiomgate.org' README.md)"
 check_eq "still only one runtime dependency" "1" \
   "$(sed -n '/^dependencies = \[/,/^\]/p' pyproject.toml | grep -c 'cryptography')"
 

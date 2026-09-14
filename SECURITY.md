@@ -12,7 +12,7 @@ You'll get a first reply within 72 hours. This is maintained by one person, so
 a fix may take longer than that, but you won't be left wondering whether the
 report was seen.
 
-`robinsvensson493@gmail.com` is the address for licensing and contractual
+`robin@axiomgate.org` is the address for licensing and contractual
 matters. Use the private advisory for security, not that address — an advisory
 carries the report, the fix and the disclosure in one place.
 

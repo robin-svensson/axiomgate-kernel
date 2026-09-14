@@ -17,7 +17,7 @@ GitHub rather than a public issue.
 ## Asking questions
 
 Open an issue for technical questions. For commercial use, integration, or
-licensing enquiries, email robinsvensson493@gmail.com — GitHub has no private
+licensing enquiries, email robin@axiomgate.org — GitHub has no private
 messaging, and a commercial enquiry does not belong in a public thread.
 
 ## Code contributions

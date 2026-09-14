@@ -408,4 +408,4 @@ it is not is free to build a product on.
   GitHub has no private messaging, and a commercial enquiry does not belong in a
   public issue thread.
 
-Robin Svensson · robinsvensson493@gmail.com
+Robin Svensson · robin@axiomgate.org
