@@ -7,6 +7,13 @@ All notable changes to this project are recorded here. The format follows
 Versions below 1.0.0 are beta: the API may change between minor versions, and
 each such change is listed here.
 
+## [0.12.1] — 2026-09-29
+
+### Fixed
+- Load the API signature checker from its repository-relative file path so the
+  release workflow's bare `pytest -q` command does not depend on `scripts/` being
+  importable as a package or being installed as Kernel runtime code.
+
 ## [0.12.0] — 2026-09-28
 
 ### Added

@@ -24,8 +24,8 @@ env -u PYTHONPATH -u PYTHONHOME "$work/venv/bin/python" -m pip install \
   --disable-pip-version-check -e "$source_root[dev]"
 version="$(env -u PYTHONPATH -u PYTHONHOME "$work/venv/bin/python" -c \
   'from importlib.metadata import version; print(version("axiomgate-kernel"))')"
-[[ "$version" == "0.12.0" ]] || {
-  echo "FAIL: expected sdist version 0.12.0, got $version" >&2
+[[ "$version" == "0.12.1" ]] || {
+  echo "FAIL: expected sdist version 0.12.1, got $version" >&2
   exit 1
 }
 env -u PYTHONPATH -u PYTHONHOME "$work/venv/bin/python" -m pip check

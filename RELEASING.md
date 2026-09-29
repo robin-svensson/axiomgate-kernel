@@ -89,7 +89,7 @@ new virtual environment with `PYTHONPATH` cleared, and runs the complete suite:
 
 ```bash
 TMPDIR=/path/outside/the/checkout \
-  bash scripts/verify_sdist_tests.sh dist/axiomgate_kernel-0.12.0.tar.gz
+  bash scripts/verify_sdist_tests.sh dist/axiomgate_kernel-0.12.1.tar.gz
 ```
 
 This checks the actual sdist archive, not just the manifest declaration.
