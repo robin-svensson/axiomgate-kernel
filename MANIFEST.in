@@ -1,0 +1,6 @@
+recursive-include tests *.py
+include examples/_setup.py
+include scripts/check_api_doc.py
+include scripts/check_dotdirs.py
+include scripts/l6_binary_identity.py
+include scripts/l6-review.sh

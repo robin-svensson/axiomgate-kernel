@@ -53,6 +53,10 @@ jobs:
         python -m pip install --upgrade pip build twine
         python -m build
         twine check --strict dist/*
+    - name: The suite must pass from the built source distribution
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: bash scripts/verify_sdist_tests.sh dist/axiomgate_kernel-*.tar.gz
     - name: The tag must match the version being published
       # Otherwise a tag pushed on a tree that still carries the old version
       # republishes that version -- which PyPI rejects as a duplicate, after

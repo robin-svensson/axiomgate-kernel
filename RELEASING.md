@@ -78,3 +78,18 @@ so no documented number ships stale, builds, runs `twine check --strict`,
 refuses to continue if the tag disagrees with the built version, runs the suite
 against the built wheel from a directory where the source tree cannot shadow it,
 and only then publishes.
+
+The source distribution has its own release gate as well. Its tests depend on
+verification helpers (`examples/_setup.py`, `scripts/check_api_doc.py`,
+`scripts/check_dotdirs.py`, `scripts/l6_binary_identity.py`, and
+`scripts/l6-review.sh`); `MANIFEST.in` declares those alongside the test
+modules. Before release, the workflow
+unpacks the built sdist into a fresh directory, installs its `dev` extra in a
+new virtual environment with `PYTHONPATH` cleared, and runs the complete suite:
+
+```bash
+TMPDIR=/path/outside/the/checkout \
+  bash scripts/verify_sdist_tests.sh dist/axiomgate_kernel-0.12.0.tar.gz
+```
+
+This checks the actual sdist archive, not just the manifest declaration.

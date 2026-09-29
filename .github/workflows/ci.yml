@@ -80,6 +80,10 @@ jobs:
         python -m pip install --upgrade pip build twine
         python -m build
         twine check --strict dist/*
+    - name: Run the suite from the built source distribution
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: bash scripts/verify_sdist_tests.sh dist/axiomgate_kernel-*.tar.gz
     - name: Run the suite against the built wheel
       # Every other job installs with `pip install -e .`, so all four of them
       # import the package straight out of the working tree. A file left out of

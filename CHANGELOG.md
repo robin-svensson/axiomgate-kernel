@@ -25,6 +25,10 @@ each such change is listed here.
 - The bounded TLA+ model and its Python implementation correspondence remain
   unchanged; the effect runner has no refinement mapping to the model.
 
+### Fixed
+- Include the declared test helpers in the source distribution and run the
+  complete release suite from the built sdist in CI and release jobs.
+
 ## [0.11.0] — 2026-09-12
 
 ### Added
