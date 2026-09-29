@@ -19,8 +19,17 @@ chain and is never written to disk -- that is ``AuditLog``'s job, and this is no
 a replacement for it. See ``docs/ROADMAP.md`` R5.
 """
 
-from typing import Any, Dict, List, Optional
+import asyncio
+import inspect
+import re
+import threading
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+from .canonical import canonical_bytes
+from .crypto import sha256_hex
+from .domain import Verdict
 from .observation import HOLDS, PARTIAL, UNOBSERVABLE, VIOLATED, ObservationLog
 
 __all__ = [
@@ -28,6 +37,12 @@ __all__ = [
     "ExecutionLog",
     "ExecutionRecord",
     "check_execution_invariant",
+    "EffectStatus",
+    "EffectExecutionResult",
+    "EffectExecutionContext",
+    "EffectOutcome",
+    "EffectExecutorRegistry",
+    "KernelEffectRunner",
 ]
 
 
@@ -225,3 +240,524 @@ def check_execution_invariant(
         "unmatched": [],
         "rolled_back": rolled_back,
     }
+
+
+class EffectStatus(str, Enum):
+    """Outcome states for one Kernel-controlled external effect attempt."""
+
+    SUCCESS = "SUCCESS"
+    DENIED = "DENIED"
+    FAILED_BEFORE_EFFECT = "FAILED_BEFORE_EFFECT"
+    EFFECT_FAILED = "EFFECT_FAILED"
+    INDETERMINATE_AFTER_EFFECT = "INDETERMINATE_AFTER_EFFECT"
+
+
+@dataclass(frozen=True)
+class EffectExecutionResult:
+    """Normalized result returned only by a registered executor."""
+
+    status: EffectStatus
+    value: Any = None
+    provider_reference: Optional[str] = None
+    idempotency_reference: Optional[str] = None
+    output_digest: Optional[str] = None
+    reason_code: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.output_digest is not None and not re.fullmatch(r"[0-9a-f]{64}", self.output_digest):
+            raise ValueError("effect output digest must be a lowercase SHA-256 value")
+
+    @classmethod
+    def success(
+        cls,
+        *,
+        value: Any = None,
+        provider_reference: Optional[str] = None,
+        idempotency_reference: Optional[str] = None,
+        output_digest: Optional[str] = None,
+    ) -> "EffectExecutionResult":
+        return cls(
+            EffectStatus.SUCCESS,
+            value=value,
+            provider_reference=provider_reference,
+            idempotency_reference=idempotency_reference,
+            output_digest=output_digest,
+        )
+
+    @classmethod
+    def failed_before_effect(cls, reason_code: str) -> "EffectExecutionResult":
+        return cls(EffectStatus.FAILED_BEFORE_EFFECT, reason_code=reason_code)
+
+    @classmethod
+    def effect_failed(
+        cls,
+        reason_code: str,
+        *,
+        provider_reference: Optional[str] = None,
+        idempotency_reference: Optional[str] = None,
+    ) -> "EffectExecutionResult":
+        return cls(
+            EffectStatus.EFFECT_FAILED,
+            provider_reference=provider_reference,
+            idempotency_reference=idempotency_reference,
+            reason_code=reason_code,
+        )
+
+    @classmethod
+    def indeterminate(
+        cls,
+        reason_code: str,
+        *,
+        provider_reference: Optional[str] = None,
+        idempotency_reference: Optional[str] = None,
+        output_digest: Optional[str] = None,
+    ) -> "EffectExecutionResult":
+        return cls(
+            EffectStatus.INDETERMINATE_AFTER_EFFECT,
+            provider_reference=provider_reference,
+            idempotency_reference=idempotency_reference,
+            output_digest=output_digest,
+            reason_code=reason_code,
+        )
+
+
+_EFFECT_CONTEXT_SEAL = object()
+
+
+class EffectExecutionContext:
+    """Private per-call marker for the point where an effect may begin."""
+
+    __slots__ = ("grant_id", "executor_id", "request_id", "_started", "_lock", "_seal")
+
+    def __init__(
+        self,
+        grant_id: str,
+        executor_id: str,
+        request_id: str,
+        *,
+        _seal: Any = None,
+    ) -> None:
+        if _seal is not _EFFECT_CONTEXT_SEAL:
+            raise ExecutionError("effect context must be issued by KernelEffectRunner")
+        self.grant_id = grant_id
+        self.executor_id = executor_id
+        self.request_id = request_id
+        self._started = False
+        self._lock = threading.Lock()
+        self._seal = _seal
+
+    def require_executor(self, executor_id: str) -> None:
+        """Validate that this context came from the runner for this executor."""
+        if (type(self) is not EffectExecutionContext
+                or self._seal is not _EFFECT_CONTEXT_SEAL
+                or self.executor_id != executor_id):
+            raise ExecutionError("effect context does not authorize this executor")
+
+    def begin_effect(self) -> None:
+        """Mark immediately before a provider call or other governed write."""
+        with self._lock:
+            if self._started:
+                raise ExecutionError("effect boundary was already entered")
+            self._started = True
+
+    @property
+    def effect_started(self) -> bool:
+        return self._started
+
+
+@dataclass(frozen=True)
+class EffectOutcome:
+    """Audited result of one attempted effect invocation."""
+
+    status: EffectStatus
+    request_id: Optional[str]
+    grant_id: Optional[str] = None
+    executor_id: Optional[str] = None
+    authorization_audit_hash: Optional[str] = None
+    grant_audit_hash: Optional[str] = None
+    effect_audit_hash: Optional[str] = None
+    provider_reference: Optional[str] = None
+    idempotency_reference: Optional[str] = None
+    output_digest: Optional[str] = None
+    value: Any = None
+    reason_code: Optional[str] = None
+
+
+class EffectExecutorRegistry:
+    """Closed registry of stable executor identities, frozen before use."""
+
+    _ID = re.compile(r"[a-z][a-z0-9_.-]{0,95}\Z")
+
+    def __init__(self) -> None:
+        self._executors: Dict[str, Callable[..., EffectExecutionResult]] = {}
+        self._frozen = False
+        self._lock = threading.Lock()
+
+    def register(self, executor_id: str, executor: Callable[..., EffectExecutionResult]) -> None:
+        """Register a trusted implementation during startup, before freeze."""
+        if not isinstance(executor_id, str) or not self._ID.fullmatch(executor_id):
+            raise ValueError("invalid executor id")
+        if not callable(executor):
+            raise TypeError("executor must be callable")
+        with self._lock:
+            if self._frozen:
+                raise ValueError("executor registry is frozen")
+            if executor_id in self._executors:
+                raise ValueError("duplicate executor id")
+            self._executors[executor_id] = executor
+
+    def freeze(self) -> None:
+        """Close registration before an execution runner is constructed."""
+        with self._lock:
+            if not self._executors:
+                raise ValueError("executor registry cannot be empty")
+            self._frozen = True
+
+    @property
+    def frozen(self) -> bool:
+        return self._frozen
+
+    @property
+    def executor_ids(self) -> Tuple[str, ...]:
+        with self._lock:
+            return tuple(sorted(self._executors))
+
+    def resolve(self, executor_id: str) -> Callable[..., EffectExecutionResult]:
+        with self._lock:
+            if not self._frozen:
+                raise ValueError("executor registry must be frozen before use")
+            try:
+                return self._executors[executor_id]
+            except KeyError as exc:
+                raise ValueError("unknown executor id") from exc
+
+
+@dataclass(frozen=True)
+class _PreparedEffect:
+    request: Mapping[str, Any]
+    binding: Any
+    arguments_bytes: bytes
+    payload: bytes
+    executor: Callable[..., EffectExecutionResult]
+    grant: Any
+    authorization_audit_hash: str
+    grant_audit_hash: str
+
+
+class KernelEffectRunner:
+    """Authorize, consume and invoke only a registered production executor.
+
+    The caller supplies data and a stable executor ID, never executable code.
+    The request is authenticated by the supplied ``Mediator`` and its PERMIT
+    audit record is the root of every later effect record in the causal chain.
+    """
+
+    def __init__(self, mediator, audit, executors: EffectExecutorRegistry, grant_store) -> None:
+        if not executors.frozen:
+            raise ValueError("executor registry must be frozen before runner startup")
+        if getattr(mediator, "_audit", None) is not audit:
+            raise ValueError("runner and mediator must share one audit log")
+        self._mediator = mediator
+        self._audit = audit
+        self._executors = executors
+        self._grant_store = grant_store
+
+    def execute(
+        self,
+        authorization_request: Mapping[str, Any],
+        *,
+        executor_id: str,
+        effect_category: str,
+        resource: str,
+        operation: str,
+        arguments: Mapping[str, Any],
+        payload: bytes,
+    ) -> EffectOutcome:
+        """Execute one synchronous effect through a signed Kernel authorization."""
+        prepared_or_denied = self._prepare(
+            authorization_request, executor_id, effect_category, resource,
+            operation, arguments, payload,
+        )
+        if isinstance(prepared_or_denied, EffectOutcome):
+            return prepared_or_denied
+        prepared = prepared_or_denied
+        context = EffectExecutionContext(
+            prepared.grant.grant_id,
+            executor_id,
+            prepared.binding.request_id,
+            _seal=_EFFECT_CONTEXT_SEAL,
+        )
+        try:
+            result = prepared.executor(context, prepared.arguments_bytes, prepared.payload)
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                result = EffectExecutionResult.failed_before_effect("async_executor_requires_async_call")
+        except Exception as exc:
+            result = EffectExecutionResult(
+                EffectStatus.INDETERMINATE_AFTER_EFFECT if context.effect_started
+                else EffectStatus.FAILED_BEFORE_EFFECT,
+                reason_code=type(exc).__name__,
+            )
+        return self._finish(prepared, context, result)
+
+    async def execute_async(
+        self,
+        authorization_request: Mapping[str, Any],
+        *,
+        executor_id: str,
+        effect_category: str,
+        resource: str,
+        operation: str,
+        arguments: Mapping[str, Any],
+        payload: bytes,
+    ) -> EffectOutcome:
+        """Execute one async effect through the same single-use grant boundary."""
+        prepared_or_denied = self._prepare(
+            authorization_request, executor_id, effect_category, resource,
+            operation, arguments, payload,
+        )
+        if isinstance(prepared_or_denied, EffectOutcome):
+            return prepared_or_denied
+        prepared = prepared_or_denied
+        context = EffectExecutionContext(
+            prepared.grant.grant_id,
+            executor_id,
+            prepared.binding.request_id,
+            _seal=_EFFECT_CONTEXT_SEAL,
+        )
+        try:
+            result = prepared.executor(context, prepared.arguments_bytes, prepared.payload)
+            if inspect.isawaitable(result):
+                result = await result
+        except asyncio.CancelledError:
+            # Once an async provider call crossed the boundary, cancellation
+            # cannot prove whether the provider acted. Consume the grant and
+            # durably report the attempt as indeterminate before returning.
+            result = EffectExecutionResult.indeterminate("executor_cancelled")
+        except Exception as exc:
+            result = EffectExecutionResult(
+                EffectStatus.INDETERMINATE_AFTER_EFFECT if context.effect_started
+                else EffectStatus.FAILED_BEFORE_EFFECT,
+                reason_code=type(exc).__name__,
+            )
+        return self._finish(prepared, context, result)
+
+    def _prepare(
+        self,
+        authorization_request: Mapping[str, Any],
+        executor_id: str,
+        effect_category: str,
+        resource: str,
+        operation: str,
+        arguments: Mapping[str, Any],
+        payload: bytes,
+    ):
+        """Match signed intent to immutable inputs, authorize, audit and consume."""
+        request_id = None
+        try:
+            if not isinstance(authorization_request, Mapping):
+                raise ValueError("authorization request is not a mapping")
+            request = dict(authorization_request)
+            request_id = request.get("request_id")
+            if not isinstance(payload, bytes):
+                raise ValueError("effect payload must be immutable bytes")
+            if not isinstance(arguments, Mapping):
+                raise ValueError("effect arguments must be a mapping")
+            arguments_bytes = canonical_bytes(dict(arguments))
+            arguments_digest = sha256_hex(arguments_bytes)
+            payload_digest = sha256_hex(payload)
+            executor = self._executors.resolve(executor_id)
+            expected = {
+                "executor_id": executor_id,
+                "effect_category": effect_category,
+                "resource": resource,
+                "operation": operation,
+                "arguments_sha256": arguments_digest,
+                "payload_sha256": payload_digest,
+                "tool_name": f"production_effect.{effect_category}",
+                "action_type": "EXECUTE",
+            }
+            if any(request.get(key) != value for key, value in expected.items()):
+                raise ValueError("signed effect request does not match invocation")
+            principal_id = request.get("principal_id")
+            if not isinstance(principal_id, str) or not principal_id:
+                raise ValueError("effect request principal is missing")
+            if not isinstance(request_id, str) or not request_id:
+                raise ValueError("effect request id is missing")
+        except Exception as exc:
+            return self._denied(request_id, executor_id, "invocation_binding_mismatch")
+
+        try:
+            decision = self._mediator.evaluate(request)
+        except Exception:
+            return self._denied(request_id, executor_id, "mediator_unavailable")
+        if (decision.verdict is not Verdict.PERMIT or not decision.audit_hash
+                or decision.bound_principal != principal_id):
+            return EffectOutcome(
+                EffectStatus.DENIED,
+                request_id=request_id,
+                executor_id=executor_id,
+                authorization_audit_hash=decision.audit_hash,
+                reason_code="kernel_denied_or_unrecorded",
+            )
+
+        # Import locally: grant.py already imports ExecutionLog from this module.
+        from .grant import EffectGrantBinding
+
+        binding = EffectGrantBinding(
+            request_id=request_id,
+            principal_id=principal_id,
+            action=str(request["action_type"]),
+            tool=str(request["tool_name"]),
+            effect_category=effect_category,
+            resource=resource,
+            operation=operation,
+            arguments_digest=arguments_digest,
+            payload_digest=payload_digest,
+            executor_id=executor_id,
+        )
+        try:
+            grant = self._grant_store.issue(decision, binding)
+            grant_audit_hash = self._audit.append({
+                "event_type": "effect.grant_issued",
+                "request_id": request_id,
+                "principal_id": principal_id,
+                "action": binding.action,
+                "tool": binding.tool,
+                "effect_category": effect_category,
+                "resource": resource,
+                "operation": operation,
+                "arguments_sha256": arguments_digest,
+                "payload_sha256": payload_digest,
+                "executor_id": executor_id,
+                "grant_id": grant.grant_id,
+                "grant_issued_at": grant.issued_at,
+                "grant_expires_at": grant.expires_at,
+                "decision_record_entry": decision.audit_hash,
+            })
+            self._grant_store.consume(grant.grant_id, binding)
+        except Exception:
+            return EffectOutcome(
+                EffectStatus.DENIED,
+                request_id=request_id,
+                executor_id=executor_id,
+                authorization_audit_hash=decision.audit_hash,
+                reason_code="grant_or_pre_effect_audit_failed",
+            )
+
+        return _PreparedEffect(
+            request=request,
+            binding=binding,
+            arguments_bytes=arguments_bytes,
+            payload=payload,
+            executor=executor,
+            grant=grant,
+            authorization_audit_hash=decision.audit_hash,
+            grant_audit_hash=grant_audit_hash,
+        )
+
+    def _finish(
+        self,
+        prepared: _PreparedEffect,
+        context: EffectExecutionContext,
+        result: Any,
+    ) -> EffectOutcome:
+        """Normalize and durably correlate the executor outcome."""
+        if not isinstance(result, EffectExecutionResult):
+            normalized = EffectExecutionResult(
+                EffectStatus.INDETERMINATE_AFTER_EFFECT if context.effect_started
+                else EffectStatus.FAILED_BEFORE_EFFECT,
+                reason_code="invalid_executor_result",
+            )
+        elif result.status is EffectStatus.DENIED:
+            normalized = EffectExecutionResult(
+                EffectStatus.INDETERMINATE_AFTER_EFFECT if context.effect_started
+                else EffectStatus.FAILED_BEFORE_EFFECT,
+                reason_code="executor_cannot_issue_denial",
+            )
+        elif result.status is EffectStatus.FAILED_BEFORE_EFFECT and context.effect_started:
+            normalized = EffectExecutionResult.indeterminate("executor_outcome_conflict")
+        elif (result.status in (EffectStatus.SUCCESS, EffectStatus.EFFECT_FAILED,
+                                EffectStatus.INDETERMINATE_AFTER_EFFECT)
+              and not context.effect_started):
+            normalized = EffectExecutionResult.failed_before_effect("executor_effect_not_started")
+        else:
+            normalized = result
+
+        record = {
+            "event_type": "effect.completed",
+            "request_id": prepared.binding.request_id,
+            "principal_id": prepared.binding.principal_id,
+            "action": prepared.binding.action,
+            "tool": prepared.binding.tool,
+            "effect_category": prepared.binding.effect_category,
+            "resource": prepared.binding.resource,
+            "operation": prepared.binding.operation,
+            "arguments_sha256": prepared.binding.arguments_digest,
+            "payload_sha256": prepared.binding.payload_digest,
+            "executor_id": prepared.binding.executor_id,
+            "grant_id": prepared.grant.grant_id,
+            "decision_record_entry": prepared.authorization_audit_hash,
+            "grant_record_entry": prepared.grant_audit_hash,
+            "outcome": normalized.status.value,
+            "effect_started": context.effect_started,
+            "provider_reference": normalized.provider_reference,
+            "idempotency_reference": normalized.idempotency_reference,
+            "output_sha256": normalized.output_digest,
+            "reason_code": normalized.reason_code,
+        }
+        try:
+            effect_audit_hash = self._audit.append(record)
+        except Exception:
+            if context.effect_started:
+                normalized = EffectExecutionResult.indeterminate("post_effect_audit_failed",
+                                                                 provider_reference=normalized.provider_reference,
+                                                                 idempotency_reference=normalized.idempotency_reference,
+                                                                 output_digest=normalized.output_digest)
+            return EffectOutcome(
+                normalized.status,
+                request_id=prepared.binding.request_id,
+                grant_id=prepared.grant.grant_id,
+                executor_id=prepared.binding.executor_id,
+                authorization_audit_hash=prepared.authorization_audit_hash,
+                grant_audit_hash=prepared.grant_audit_hash,
+                provider_reference=normalized.provider_reference,
+                idempotency_reference=normalized.idempotency_reference,
+                output_digest=normalized.output_digest,
+                value=normalized.value if normalized.status is EffectStatus.SUCCESS else None,
+                reason_code=normalized.reason_code or "post_effect_audit_failed",
+            )
+        return EffectOutcome(
+            normalized.status,
+            request_id=prepared.binding.request_id,
+            grant_id=prepared.grant.grant_id,
+            executor_id=prepared.binding.executor_id,
+            authorization_audit_hash=prepared.authorization_audit_hash,
+            grant_audit_hash=prepared.grant_audit_hash,
+            effect_audit_hash=effect_audit_hash,
+            provider_reference=normalized.provider_reference,
+            idempotency_reference=normalized.idempotency_reference,
+            output_digest=normalized.output_digest,
+            value=normalized.value if normalized.status is EffectStatus.SUCCESS else None,
+            reason_code=normalized.reason_code,
+        )
+
+    def _denied(self, request_id: Any, executor_id: Any, reason_code: str) -> EffectOutcome:
+        """Record a bounded denial; audit failure can never authorize execution."""
+        try:
+            self._audit.append({
+                "event_type": "effect.denied",
+                "request_id": request_id if isinstance(request_id, str) else None,
+                "executor_id": executor_id if isinstance(executor_id, str) else None,
+                "reason_code": reason_code,
+            })
+        except Exception:
+            pass
+        return EffectOutcome(
+            EffectStatus.DENIED,
+            request_id=request_id if isinstance(request_id, str) else None,
+            executor_id=executor_id if isinstance(executor_id, str) else None,
+            reason_code=reason_code,
+        )

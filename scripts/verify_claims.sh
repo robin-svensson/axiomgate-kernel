@@ -107,7 +107,7 @@ anchor "I4  observation_seq in audit" axiomgate_kernel/mediator.py      757 '"ob
 anchor "I1/I4/I6 check_invariants"   axiomgate_kernel/observation.py    143 'def check_invariants'
 anchor "I5  execution recorded"      axiomgate_kernel/grant.py          222 'rec = self\._executions\.record\('
 anchor "I5  rollback marked"         axiomgate_kernel/grant.py          253 'self\._executions\.mark_rolled_back\(seq\)'
-anchor "I5  check_execution_invariant" axiomgate_kernel/execution.py    123 'def check_execution_invariant'
+anchor "I5  check_execution_invariant" axiomgate_kernel/execution.py    138 'def check_execution_invariant'
 
 # The anchors above are checked against the CODE. Review finding 2026-09-10:
 # the numbers stated in TRACEABILITY.md were a second, disconnected set --
@@ -629,7 +629,7 @@ check_eq "ROADMAP's count for test_execution.py is the collected one" \
 
 echo "== 7. Code volume (README figures) =="
 check_eq "core files (.py)" "28" "$(find axiomgate_kernel -name '*.py' | wc -l)"
-check_eq "test files"       "24" "$(find tests  -name '*.py' | wc -l)"
+check_eq "test files"       "26" "$(find tests  -name '*.py' | wc -l)"
 
 echo "== 8. README and docs say the same thing as the source of truth =="
 # The number used to be hardcoded both here and in README -- two places that

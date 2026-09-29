@@ -7,9 +7,23 @@ All notable changes to this project are recorded here. The format follows
 Versions below 1.0.0 are beta: the API may change between minor versions, and
 each such change is listed here.
 
-## [Unreleased]
+## [0.12.0] — 2026-09-28
 
-Nothing yet.
+### Added
+- `ProductionEffectGrantStore` and `KernelEffectRunner` provide a separate,
+  short-lived single-use grant for one canonical effect request and one frozen
+  executor identity. The runner records the authorization, grant, provider
+  outcome and any provider/idempotency references on the shared audit chain.
+- Effect contexts are runner-issued and executor-bound. Fixed executors can
+  reject direct helper calls that do not carry the context minted after grant
+  consumption.
+- `AuditLog.verify_file` verifies a persisted chain read-only, allowing an
+  integration to check an effect reference without opening or repairing that
+  evidence file.
+- Extend the API signature gate to resolve documented class methods, and add
+  audit-file readback coverage for async cancellation after an effect starts.
+- The bounded TLA+ model and its Python implementation correspondence remain
+  unchanged; the effect runner has no refinement mapping to the model.
 
 ## [0.11.0] — 2026-09-12
 

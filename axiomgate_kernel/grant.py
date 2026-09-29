@@ -6,11 +6,11 @@ One-shot reserved Owner grant with 12-field binding.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from uuid import uuid4
 import threading
 
-from .domain import ActionType, RiskLevel
+from .domain import ActionType, RiskLevel, Verdict
 from .execution import ExecutionLog
 
 
@@ -268,3 +268,137 @@ def scope_hash(capability) -> str:
         "role": capability.role.value,
     }
     return sha256_hex(canonical_json(body).encode("utf-8"))
+
+
+@dataclass(frozen=True)
+class EffectGrantBinding:
+    """The complete request identity an external effect grant authorizes."""
+
+    request_id: str
+    principal_id: str
+    action: str
+    tool: str
+    effect_category: str
+    resource: str
+    operation: str
+    arguments_digest: str
+    payload_digest: str
+    executor_id: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "request_id", "principal_id", "action", "tool", "effect_category",
+            "resource", "operation", "executor_id",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or len(value) > 256:
+                raise GrantError(f"effect grant {name} is invalid")
+        for name in ("arguments_digest", "payload_digest"):
+            value = getattr(self, name)
+            if (not isinstance(value, str) or len(value) != 64
+                    or any(char not in "0123456789abcdef" for char in value)):
+                raise GrantError(f"effect grant {name} is invalid")
+
+
+@dataclass(frozen=True)
+class ProductionEffectGrant:
+    """Short-lived one-shot grant for a single locked production executor."""
+
+    grant_id: str
+    nonce: str
+    decision_audit_hash: str
+    binding: EffectGrantBinding
+    issued_at: str
+    expires_at: str
+
+
+class ProductionEffectGrantStore:
+    """Atomically issue and consume short-lived grants for effect execution.
+
+    This store is deliberately separate from ``ReservedGrantStore``: the latter
+    represents an Owner decision across an escalation/re-entry cycle and has
+    rollback semantics that are unsafe for an external provider effect.
+    """
+
+    MAX_TTL = timedelta(seconds=30)
+
+    def __init__(
+        self,
+        *,
+        ttl: Optional[timedelta] = None,
+        clock: Optional[Callable[[], datetime]] = None,
+    ) -> None:
+        self._ttl = ttl or self.MAX_TTL
+        if self._ttl <= timedelta(0) or self._ttl > self.MAX_TTL:
+            raise GrantError("effect grant TTL must be positive and at most 30 seconds")
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._items: Dict[str, ProductionEffectGrant] = {}
+        self._consumed: set[str] = set()
+        self._lock = threading.Lock()
+
+    def issue(self, decision, binding: EffectGrantBinding) -> ProductionEffectGrant:
+        """Issue only from a persisted Kernel PERMIT matching the principal/action."""
+        if getattr(decision, "verdict", None) is not Verdict.PERMIT:
+            raise GrantError("effect grant requires a Kernel PERMIT")
+        if not getattr(decision, "audit_hash", None):
+            raise GrantError("effect grant requires a persisted decision audit")
+        if getattr(decision, "bound_principal", None) != binding.principal_id:
+            raise GrantError("effect grant principal does not match the decision")
+        decision_grant = getattr(decision, "grant", None)
+        if not isinstance(decision_grant, dict):
+            raise GrantError("effect grant requires a decision grant")
+        expected = {
+            "request_id": binding.request_id,
+            "principal_id": binding.principal_id,
+            "action_type": binding.action,
+        }
+        if any(decision_grant.get(field) != value for field, value in expected.items()):
+            raise GrantError("effect grant action or request does not match the decision")
+
+        now = self._clock()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise GrantError("effect grant clock must return an aware timestamp")
+        now = now.astimezone(timezone.utc)
+        grant = ProductionEffectGrant(
+            grant_id=f"eg-{uuid4().hex}",
+            nonce=uuid4().hex,
+            decision_audit_hash=decision.audit_hash,
+            binding=binding,
+            issued_at=now.isoformat(),
+            expires_at=(now + self._ttl).isoformat(),
+        )
+        with self._lock:
+            self._items[grant.grant_id] = grant
+        return grant
+
+    def consume(
+        self,
+        grant_id: str,
+        binding: EffectGrantBinding,
+    ) -> ProductionEffectGrant:
+        """Atomically redeem one exact, unexpired binding; replay always fails."""
+        with self._lock:
+            grant = self._items.get(grant_id)
+            if grant is None:
+                raise GrantError("effect grant not found")
+            if grant_id in self._consumed:
+                raise GrantError("effect grant already consumed")
+            if grant.binding != binding:
+                raise GrantError("effect grant binding mismatch")
+            try:
+                issued = datetime.fromisoformat(grant.issued_at)
+                expires = datetime.fromisoformat(grant.expires_at)
+            except ValueError as exc:
+                raise GrantError("effect grant timestamp is corrupt") from exc
+            now = self._clock()
+            if now.tzinfo is None or now.utcoffset() is None:
+                raise GrantError("effect grant clock must return an aware timestamp")
+            now = now.astimezone(timezone.utc)
+            if issued.tzinfo is None or expires.tzinfo is None:
+                raise GrantError("effect grant timestamp lacks timezone")
+            if now < issued.astimezone(timezone.utc):
+                raise GrantError("effect grant is not yet valid")
+            if now >= expires.astimezone(timezone.utc):
+                raise GrantError("effect grant expired")
+            self._consumed.add(grant_id)
+            return grant

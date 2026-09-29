@@ -22,7 +22,10 @@ from .capability import Capability, CapabilityRegistry, make_capability
 from .authentication import Authenticator, AuthnResult, NonceTracker, PrincipalKeyStore, sign_canonical, sign_request
 from .authorization import CapabilityDecision, CapabilityCheck, check_capability
 from .escalation import EscalationRecord, EscalationStore
-from .grant import ReservedGrant, ReservedGrantStore, GrantError, ReasonClass, scope_hash
+from .grant import (
+    ReservedGrant, ReservedGrantStore, GrantError, ReasonClass, scope_hash,
+    EffectGrantBinding, ProductionEffectGrant, ProductionEffectGrantStore,
+)
 from .evidence import EvidenceRecord, EvidenceJournal, EvidenceError
 from .provenance import ProvenanceChecker, ProvenanceResult, ProvenanceKind, FixedProvenanceChecker, GitProvenanceChecker
 from .policy import PolicySnapshot
@@ -32,6 +35,8 @@ from .client import MediatorClient
 from .provisioning import ProvisioningToken, ProvisioningError
 from .execution import (
     ExecutionError, ExecutionLog, ExecutionRecord, check_execution_invariant,
+    EffectStatus, EffectExecutionResult, EffectExecutionContext, EffectOutcome,
+    EffectExecutorRegistry, KernelEffectRunner,
 )
 from .observation import (
     ObservationError, ObservationLog, ObservationRecord, check_invariants,
@@ -69,6 +74,7 @@ __all__ = [
     "EscalationRecord", "EscalationStore",
     # Grant
     "ReservedGrant", "ReservedGrantStore", "GrantError", "ReasonClass", "scope_hash",
+    "EffectGrantBinding", "ProductionEffectGrant", "ProductionEffectGrantStore",
     # Evidence
     "EvidenceRecord", "EvidenceJournal", "EvidenceError",
     # Provenance
@@ -87,5 +93,7 @@ __all__ = [
     "ExecutionLog",
     "ExecutionRecord",
     "check_execution_invariant",
+    "EffectStatus", "EffectExecutionResult", "EffectExecutionContext", "EffectOutcome",
+    "EffectExecutorRegistry", "KernelEffectRunner",
     "check_invariants",
 ]

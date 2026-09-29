@@ -4,7 +4,7 @@ Every signature in this document is checked against the running package.
 `scripts/check_api_doc.py` resolves each call quoted here — table rows, the shorthand
 method rows that begin with a dot, and the signatures in code blocks — and compares its parameter
 names, in order, against `inspect.signature`. A call it cannot resolve is a failure,
-not a silent pass. Of the 62 calls quoted in this file it checks 59; the other three
+not a silent pass. Of the 74 calls quoted in this file it checks 71; the other three
 are `min` and `frozenset`, which claim nothing about this package. Regenerate the
 reference dump with `python scripts/dump_api.py`; `scripts/verify_claims.sh` runs the
 comparison and fails on any drift.
@@ -101,6 +101,84 @@ integrator that binds no context would otherwise be denied everything.
 `MediatorClient(mediator=None)` wraps the same seven request methods and takes
 plain `dict` requests. A client constructed with `None` denies everything —
 this is the deliberate behaviour when the kernel is unreachable.
+
+---
+
+## Locked effect execution
+
+`Mediator.evaluate` authorizes a signed request and appends its decision record.
+Integrations that execute external effects can add `KernelEffectRunner`, which
+requires a frozen `EffectExecutorRegistry` and a grant store that issues and
+atomically consumes `ProductionEffectGrant` values. The caller supplies a stable
+executor ID and data; it does not supply a callback to the runner.
+
+The grant binds the authenticated principal, action, tool category, resource,
+operation, canonical argument and payload digests, and executor ID. Its maximum
+TTL is 30 seconds. The runner writes a grant record before invocation and a
+correlated outcome record after invocation. If the latter cannot be written
+after an effect began, the result is `INDETERMINATE_AFTER_EFFECT`.
+
+The integration owns the registry contents. Register trusted executors during
+startup, freeze the registry, and construct the runner with the same audit log
+used by the mediator:
+
+```python
+executors = EffectExecutorRegistry()
+executors.register(executor_id, executor)
+executors.freeze()
+runner = KernelEffectRunner(mediator, audit, executors, grant_store)
+```
+
+### `EffectExecutorRegistry`
+
+| Method | Purpose |
+|---|---|
+| `EffectExecutorRegistry()` | Start an empty registration set. |
+| `.register(executor_id, executor)` | Add one trusted implementation; duplicate IDs and registration after freeze fail. |
+| `.freeze()` | Close registration before a runner is constructed. |
+| `.resolve(executor_id)` | Resolve the only implementation for one stable ID after freeze. |
+
+### `ProductionEffectGrantStore`
+
+`ProductionEffectGrantStore(*, ttl=None, clock=None)` creates an atomic in-memory
+store for effect grants, separate from `ReservedGrantStore` escalation semantics.
+
+| Method | Purpose |
+|---|---|
+| `.issue(decision, binding)` | Create a grant from a persisted Kernel `PERMIT`. |
+| `.consume(grant_id, binding)` | Atomically consume the exact unexpired binding once. |
+
+### `KernelEffectRunner`
+
+`KernelEffectRunner(mediator, audit, executors, grant_store)` requires a frozen
+registry and the same audit object as the mediator.
+
+| Method | Purpose |
+|---|---|
+| `.execute(authorization_request, *, executor_id, effect_category, resource, operation, arguments, payload)` | Authorize and invoke a synchronous registered executor. |
+| `.execute_async(authorization_request, *, executor_id, effect_category, resource, operation, arguments, payload)` | Authorize and invoke an asynchronous registered executor. |
+
+An executor context is issued by the runner after grant consumption and is bound
+to that grant, request and executor ID.
+
+### `EffectExecutionContext`
+
+| Method | Purpose |
+|---|---|
+| `.require_executor(executor_id)` | Refuse invocation under another executor identity. |
+| `.begin_effect()` | Mark the point immediately before the external effect. |
+
+### `EffectExecutionResult`
+
+| Method | Purpose |
+|---|---|
+| `.success(*, value=None, provider_reference=None, idempotency_reference=None, output_digest=None)` | Normalize a known success. |
+| `.failed_before_effect(reason_code)` | Report a failure before the effect started. |
+| `.effect_failed(reason_code, *, provider_reference=None, idempotency_reference=None)` | Report a known provider failure after the effect call. |
+| `.indeterminate(reason_code, *, provider_reference=None, idempotency_reference=None, output_digest=None)` | Report an outcome that cannot be resolved. |
+
+This API governs only effects dispatched through this runner. Integrators remain
+responsible for routing each governed application path through a fixed executor.
 
 ---
 
@@ -366,9 +444,9 @@ evidence of nothing whether the log is empty or merely busy.
 
 ## What the kernel does not do
 
-- **It does not execute.** `Decision` carries no execution flag and the kernel
-  invokes nothing. Acting on a `PERMIT` is the caller's job, and so is the
-  discipline of not acting without one.
+- **`Mediator` does not execute.** `Decision` carries no execution flag. An
+  integration may use the optional `KernelEffectRunner` for registered effects;
+  other `PERMIT` consumers still perform their own execution wiring.
 - **It does not persist by itself.** `axiomgate_kernel.persistence` provides SQLite
   serialization; wiring it up is the integrator's choice.
 - **It does not decide policy.** `PolicySnapshot` is data you supply.

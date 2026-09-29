@@ -136,7 +136,7 @@ def resolve(name: str, owner):
         if owner is None:
             return None, f"method notation with no class in context: {name}"
         target = getattr(owner, member, None)
-        if not inspect.isfunction(target):
+        if not (inspect.isfunction(target) or inspect.ismethod(target)):
             return None, f"{owner.__name__} has no method {member}"
         return target, None
 

@@ -428,6 +428,26 @@ class AuditLog:
 
         return True, "ok", last, count, at_note
 
+    @classmethod
+    def verify_file(
+        cls, path: str, mac_key: bytes,
+    ) -> Tuple[bool, str, Optional[str], int]:
+        """Verify a chain without opening it for append or repairing its tail.
+
+        Recovery belongs to the process that owns a live log. Consumers that
+        validate a persisted effect reference must be able to fail closed on a
+        malformed tail without changing the evidence they are checking.
+        """
+        if not isinstance(path, str) or not path:
+            raise ValueError("audit path must be a non-empty string")
+        if not isinstance(mac_key, bytes) or not mac_key:
+            raise ValueError("audit MAC key must be non-empty bytes")
+        checker = cls.__new__(cls)
+        checker.path = path
+        checker._mac_key = bytes(mac_key)
+        checker._lock = threading.RLock()
+        return checker.verify_integrity()
+
 
 def _atomic_append(path: str, line: str) -> None:
     """Atomic append to audit log file."""

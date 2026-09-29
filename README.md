@@ -43,6 +43,14 @@ Plus two mechanisms that are not reconstructable from off-the-shelf parts:
 - **Three-state evidence machine** — `CANDIDATE → VERIFIED → AUTHORIZED`, one-way,
   with enforced R-IV / R-DEC roles and no retraction path.
 
+Integrations that need a physical effect boundary can use the optional
+`KernelEffectRunner`. It consumes a short-lived grant bound to one canonical
+request and one stable executor ID, invokes only the implementation registered
+before the executor registry was frozen, and appends the outcome to the same
+audit chain as the authorization decision. This boundary covers calls routed
+through the runner; the integrator must wire every governed application path.
+The formal TLA+ model does not include this runner or external effects.
+
 **All four protections have been mutation-tested** (2026-09-09): each check was
 removed in memory and the scenario re-run. Three of the four have no second
 barrier — see [docs/TRACEABILITY.md](docs/TRACEABILITY.md) for exactly which.
@@ -64,7 +72,7 @@ them — `strictness_report` and `strict_mediator`, R3.
 git clone https://github.com/robin-svensson/axiomgate-kernel.git
 cd axiomgate-kernel
 pip install -e ".[dev]"
-pytest -q                       # 371 tests
+pytest -q                       # 388 tests
 python examples/01_permit.py    # a request that is allowed
 python examples/02_deny.py      # three that are refused, three different ways
 python examples/03_audit_trail.py   # tampering with the log, and being caught
@@ -78,7 +86,7 @@ from axiomgate_kernel import Mediator, AuditLog, Verdict
 ```
 
 One runtime dependency (`cryptography`) and one for development (`pytest`). The
-suite runs in a fresh virtual environment containing nothing else — 371 passed,
+suite runs in a fresh virtual environment containing nothing else — 388 passed,
 with no `PYTHONPATH` and no editable install of anything but this package — so a
 green suite here is not an artefact of a pre-populated environment. Reproduce it
 with `bash scripts/verify_clean_install.sh`, which builds the empty environment,
@@ -336,7 +344,7 @@ None of them ships a model-checked governance specification.
 
 ## Status and licence
 
-Version 0.11.0. The code is mature — 371 tests, mutation-tested protections — but
+Version 0.12.0. The code is mature — 388 tests, mutation-tested protections — but
 has never run outside a development environment. Treat it as beta.
 
 **Two protections are off until you turn them on.** The provenance ceiling requires
